@@ -7,7 +7,10 @@ import { useCurrentUser } from '../hooks/useCurrentUser'
 import { fmtUsd } from '../lib/web3'
 
 export default function Layout() {
-  const { authenticated, balance, error, refresh } = useCurrentUser()
+  const { authenticated, balance, error, refresh, dbUser } = useCurrentUser()
+  const isOrg = dbUser?.role === 'ong'
+  const navClass = ({ isActive }: { isActive: boolean }) =>
+    isActive ? 'text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-900'
   const [topUpOpen, setTopUpOpen] = useState(false)
 
   return (
@@ -20,16 +23,23 @@ export default function Layout() {
               Trazo
             </Link>
             <nav className="hidden gap-4 text-sm sm:flex">
-              <NavLink to="/" end className={({ isActive }) => (isActive ? 'text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-900')}>
+              <NavLink to="/fundaciones" className={navClass}>
                 Fundaciones
               </NavLink>
-              <NavLink to="/mis-donaciones" className={({ isActive }) => (isActive ? 'text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-900')}>
-                Mis donaciones
-              </NavLink>
+              {authenticated && isOrg && (
+                <NavLink to="/organizacion" className={navClass}>
+                  Mi organización
+                </NavLink>
+              )}
+              {authenticated && !isOrg && (
+                <NavLink to="/mis-donaciones" className={navClass}>
+                  Mis donaciones
+                </NavLink>
+              )}
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            {authenticated && (
+            {authenticated && !isOrg && (
               <div className="inline-flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-1.5 text-sm">
                 <span className="text-slate-500">Saldo</span>
                 {error ? (

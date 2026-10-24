@@ -1,5 +1,5 @@
 import { env } from './env'
-import type { Donation, User } from '../types'
+import type { Donation, Foundation, User } from '../types'
 
 /** Quick top-up amounts (USD) offered in the top-up modal. */
 export const TOPUP_PRESETS = [50, 100, 500] as const
@@ -63,3 +63,12 @@ export const donate = (token: string, foundationId: string, amount: number) =>
 
 export const releaseInitial = (token: string, donationId: string) =>
   callFn<ReleaseInfo>('release-initial', token, { donation_id: donationId })
+
+export interface RegisterFoundationInput {
+  name: string
+  description?: string
+  category?: string
+}
+
+export const registerFoundation = (token: string, input: RegisterFoundationInput) =>
+  callFn<{ foundation: Foundation }>('register-foundation', token, input)

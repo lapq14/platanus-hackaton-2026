@@ -41,6 +41,7 @@ export interface Donation {
   release_tx_hash: string | null
   created_at: string
   foundation?: Foundation
+  donor?: Pick<User, 'email' | 'wallet_address'> | null
 }
 
 export interface Verification {

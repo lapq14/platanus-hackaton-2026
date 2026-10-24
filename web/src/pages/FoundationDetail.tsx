@@ -36,7 +36,7 @@ export default function FoundationDetail() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900">
+      <Link to="/fundaciones" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900">
         <ArrowLeft size={16} /> Volver
       </Link>
 
