@@ -7,10 +7,8 @@ import ReputationBadge from '../components/ReputationBadge'
 import DonateModal from '../components/DonateModal'
 import { explorerAddress, explorerTx } from '../lib/chain'
 import { supabase } from '../lib/supabase'
-import { SYMBOL, fmt } from '../lib/web3'
+import { fmtUsd } from '../lib/web3'
 import type { Donation } from '../types'
-
-const HAS_PRIVY = Boolean(import.meta.env.VITE_PRIVY_APP_ID)
 
 export default function FoundationDetail() {
   const { id } = useParams()
@@ -66,7 +64,7 @@ export default function FoundationDetail() {
           </div>
           <div className="rounded-lg bg-slate-50 p-3">
             <dt className="text-slate-500">Total recibido</dt>
-            <dd className="text-lg font-semibold">{fmt(f.total_received, 5)} {SYMBOL}</dd>
+            <dd className="text-lg font-semibold">{fmtUsd(f.total_received)}</dd>
           </div>
         </dl>
 
@@ -97,15 +95,15 @@ export default function FoundationDetail() {
             {donations.map((d) => (
               <li key={d.id} className="flex items-center justify-between py-2">
                 <div>
-                  <span className="font-mono">{fmt(d.total_amount, 6)} {d.currency}</span>
+                  <span className="font-mono">{fmtUsd(d.total_amount)}</span>
                   <span className="ml-2 text-slate-500">
-                    liberado {fmt(d.amount_released, 6)} · {new Date(d.created_at).toLocaleString('es-VE')}
+                    liberado {fmtUsd(d.amount_released)} · {new Date(d.created_at).toLocaleString('es-VE')}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusPill status={d.status} />
-                  {d.deposit_tx_hash && (
-                    <a href={explorerTx(d.deposit_tx_hash)} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-brand-700">
+                  {d.release_tx_hash && (
+                    <a href={explorerTx(d.release_tx_hash)} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-brand-700">
                       <ExternalLink size={14} />
                     </a>
                   )}
@@ -131,9 +129,6 @@ export default function FoundationDetail() {
 }
 
 function DonateButton({ onClick }: { onClick: () => void }) {
-  if (!HAS_PRIVY) {
-    return <p className="text-sm text-amber-600">Configura VITE_PRIVY_APP_ID para habilitar donaciones.</p>
-  }
   return <PrivyDonateButton onClick={onClick} />
 }
 

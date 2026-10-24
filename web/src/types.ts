@@ -9,6 +9,7 @@ export interface User {
   wallet_address: string
   email: string | null
   role: UserRole
+  balance: number
   created_at: string
 }
 
@@ -37,6 +38,7 @@ export interface Donation {
   currency: string
   status: DonationStatus
   deposit_tx_hash: string | null
+  release_tx_hash: string | null
   created_at: string
   foundation?: Foundation
 }

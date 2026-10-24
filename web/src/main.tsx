@@ -5,33 +5,26 @@ import { PrivyProvider } from '@privy-io/react-auth'
 import './index.css'
 import App from './App'
 import { CHAIN } from './lib/chain'
-
-const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID as string | undefined
-
-const app = (
-  <BrowserRouter>
-    <App />
-  </BrowserRouter>
-)
+import { env } from './lib/env'
+import { CurrentUserProvider } from './context/CurrentUserProvider'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {PRIVY_APP_ID ? (
-      <PrivyProvider
-        appId={PRIVY_APP_ID}
-        config={{
-          loginMethods: ['google', 'email'],
-          appearance: { theme: 'light', accentColor: '#16a34a' },
-          embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' } },
-          defaultChain: CHAIN,
-          supportedChains: [CHAIN],
-        }}
-      >
-        {app}
-      </PrivyProvider>
-    ) : (
-      // Sin App ID de Privy la app igual arranca (modo solo lectura) para no bloquear el desarrollo.
-      app
-    )}
+    <PrivyProvider
+      appId={env.privyAppId}
+      config={{
+        loginMethods: ['google', 'email'],
+        appearance: { theme: 'light', accentColor: '#16a34a' },
+        embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' } },
+        defaultChain: CHAIN,
+        supportedChains: [CHAIN],
+      }}
+    >
+      <CurrentUserProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </CurrentUserProvider>
+    </PrivyProvider>
   </StrictMode>,
 )

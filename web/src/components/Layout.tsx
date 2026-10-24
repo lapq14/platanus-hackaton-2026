@@ -1,10 +1,15 @@
 import { Link, NavLink, Outlet } from 'react-router-dom'
-import { ShieldCheck } from 'lucide-react'
+import { PlusCircle, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
 import AuthButton from './AuthButton'
-
-const HAS_PRIVY = Boolean(import.meta.env.VITE_PRIVY_APP_ID)
+import TopUpModal from './TopUpModal'
+import { useCurrentUser } from '../hooks/useCurrentUser'
+import { fmtUsd } from '../lib/web3'
 
 export default function Layout() {
+  const { authenticated, balance, error, refresh } = useCurrentUser()
+  const [topUpOpen, setTopUpOpen] = useState(false)
+
   return (
     <div className="min-h-full flex flex-col">
       <header className="border-b border-slate-200 bg-white">
@@ -18,14 +23,35 @@ export default function Layout() {
               <NavLink to="/" end className={({ isActive }) => (isActive ? 'text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-900')}>
                 Fundaciones
               </NavLink>
-              {HAS_PRIVY && (
-                <NavLink to="/mis-donaciones" className={({ isActive }) => (isActive ? 'text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-900')}>
-                  Mis donaciones
-                </NavLink>
-              )}
+              <NavLink to="/mis-donaciones" className={({ isActive }) => (isActive ? 'text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-900')}>
+                Mis donaciones
+              </NavLink>
             </nav>
           </div>
-          <AuthButton />
+          <div className="flex items-center gap-3">
+            {authenticated && (
+              <div className="inline-flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-1.5 text-sm">
+                <span className="text-slate-500">Saldo</span>
+                {error ? (
+                  <>
+                    <span className="text-red-700">{error}</span>
+                    <button onClick={() => void refresh()} className="font-medium text-brand-700 hover:text-brand-600">
+                      Reintentar
+                    </button>
+                  </>
+                ) : (
+                  <span className="font-mono font-medium">{balance === null ? '…' : fmtUsd(balance)}</span>
+                )}
+                <button
+                  onClick={() => setTopUpOpen(true)}
+                  className="inline-flex items-center gap-1 font-medium text-brand-700 hover:text-brand-600"
+                >
+                  <PlusCircle size={14} /> Recargar
+                </button>
+              </div>
+            )}
+            <AuthButton />
+          </div>
         </div>
       </header>
       <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8">
@@ -34,6 +60,7 @@ export default function Layout() {
       <footer className="text-center text-xs text-slate-400 py-6">
         Donaciones con custodia progresiva y auditoría verificable · Platanus Hack 26
       </footer>
+      {topUpOpen && <TopUpModal onClose={() => setTopUpOpen(false)} />}
     </div>
   )
 }

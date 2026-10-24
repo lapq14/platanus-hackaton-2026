@@ -1,8 +1,6 @@
 import { usePrivy } from '@privy-io/react-auth'
 import { LogIn, LogOut, Wallet } from 'lucide-react'
 
-const HAS_PRIVY = Boolean(import.meta.env.VITE_PRIVY_APP_ID)
-
 function short(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
@@ -36,8 +34,5 @@ function PrivyAuthButton() {
 }
 
 export default function AuthButton() {
-  if (!HAS_PRIVY) {
-    return <span className="text-xs text-amber-600">Falta VITE_PRIVY_APP_ID</span>
-  }
   return <PrivyAuthButton />
 }
