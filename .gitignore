@@ -1,0 +1,3 @@
+supabase/.env.local
+supabase/.temp
+node_modules
