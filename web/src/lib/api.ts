@@ -4,7 +4,7 @@ import type { AgentCheck, Donation, Foundation, User } from '../types'
 /** Quick top-up amounts (USD) offered in the top-up modal. */
 export const TOPUP_PRESETS = [50, 100, 500] as const
 
-/** Maximum simulated balance per user (USD); enforced by the database. */
+/** Maximum simulated balance per user (USD); enforced by `wallet_top_up` (server side). */
 export const BALANCE_CAP = 10000
 
 export class ApiError extends Error {

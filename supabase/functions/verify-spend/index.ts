@@ -15,7 +15,7 @@
 // and the response carries release.status = 'pending'; calling again with the same invoice_id retries.
 // Required secret: ANTHROPIC_API_KEY (supabase secrets set ANTHROPIC_API_KEY=...).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
-import Anthropic from 'npm:@anthropic-ai/sdk'
+import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0'
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64'
 import { admin, CORS, dbError, env, fail, HttpError, json, readBody, releaseSpend, requireUser, type SpendReleaseResult } from '../_shared/core.ts'
 
@@ -23,6 +23,8 @@ const RIF_RE = /^[JGVEPC]-\d{8}-\d$/
 const BUCKET = 'invoices'
 const MAX_BYTES = 10 * 1024 * 1024
 const MODEL = 'claude-opus-5-5'
+// Per attempt; with maxRetries: 1 the worst case (~2 min) stays below the 150 s Edge Function limit.
+const MODEL_TIMEOUT_MS = 60_000
 
 type CheckId = 'origin_account_owned' | 'destination_account_business' | 'rif_exists' | 'rif_matches_destination'
 const CHECK_IDS: CheckId[] = ['origin_account_owned', 'destination_account_business', 'rif_exists', 'rif_matches_destination']
@@ -140,7 +142,7 @@ const docBlock = (d: Doc) =>
 
 /** Asks Claude for a structured verdict. Any failure throws an HttpError: the invoice then stays in_review. */
 async function askModel(origin: Doc, destination: Doc, foundation: { name: string; rif: string | null }): Promise<Verdict> {
-  const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') })
+  const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY'), timeout: MODEL_TIMEOUT_MS, maxRetries: 1 })
   const facts = `Foundation facts (from our database):\n- Name: ${foundation.name}\n- RIF: ${foundation.rif ?? '(not registered)'}`
   try {
     const msg = await client.messages.create({
@@ -178,6 +180,9 @@ async function askModel(origin: Doc, destination: Doc, foundation: { name: strin
     if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
       console.error('verify-spend: Anthropic credentials rejected')
       throw new HttpError(500, 'ai_misconfigured', 'El agente no está configurado correctamente')
+    }
+    if (e instanceof Anthropic.APIConnectionTimeoutError) {
+      throw new HttpError(504, 'ai_timeout', 'El agente tardó demasiado en responder. La factura sigue en revisión.')
     }
     if (e instanceof Anthropic.APIConnectionError) {
       throw new HttpError(502, 'ai_unavailable', 'No se pudo contactar al agente. La factura sigue en revisión.')
@@ -298,7 +303,7 @@ Deno.serve(async (req) => {
     const det: Record<CheckId, { passed: boolean; detail: string }> = {
       origin_account_owned: (() => {
         const nameOk = namesMatch(verdict.origin.holder_name, foundation.name)
-        const rifOk = originRif === '' || originRif === foundation.rif
+        const rifOk = originRif !== '' && originRif === foundation.rif
         const hasId = originRif !== '' || verdict.origin.holder_name.trim() !== ''
         return nameOk && rifOk && hasId
           ? { passed: true, detail: 'El titular coincide con el nombre y RIF de la fundación.' }

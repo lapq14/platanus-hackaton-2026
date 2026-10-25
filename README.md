@@ -201,6 +201,8 @@ Cada paquete tiene su propio archivo. No hay `.env` en la raíz. Las plantillas 
 | `PRIVY_VERIFICATION_KEY` | Sí (PEM, saltos de línea como `\n` literal) | - | - | Sí | Sí |
 | `CHAIN_ID` | Opcional (84532) | - | - | Sí | Sí |
 | `CHAIN_RPC` | Opcional (https://sepolia.base.org) | - | - | Sí | Sí |
+| `CHAIN_MODE` | Opcional (`simulated` por defecto; solo `real` envía transacciones en Base Sepolia) | - | - | Sí | Sí |
+| `ANTHROPIC_API_KEY` | Sí (verificación de gastos con `verify-spend`) | - | - | Sí | Sí |
 | `SUPABASE_URL` | Solo local | - | - | Sí | No (se inyecta sola) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Solo local | - | - | Sí | No (se inyecta sola) |
 
@@ -215,7 +217,7 @@ El frontend valida sus variables al arrancar. Si falta una requerida, falla con 
 **Backend en Supabase.** Orden de despliegue:
 
 1. Aplicar la migración A (`*_simulated_donor_balance_a.sql`).
-2. Cargar los secretos de las funciones: `npx supabase secrets set CHAIN_ID=... CHAIN_RPC=... ESCROW_PRIVATE_KEY=... PRIVY_APP_ID=... PRIVY_VERIFICATION_KEY=...`
+2. Cargar los secretos de las funciones: `npx supabase secrets set CHAIN_ID=... CHAIN_RPC=... ESCROW_PRIVATE_KEY=... PRIVY_APP_ID=... PRIVY_VERIFICATION_KEY=... ANTHROPIC_API_KEY=... CHAIN_MODE=simulated`. `CHAIN_MODE` es opcional: sin definir (o con cualquier valor distinto de `real`) la cadena es simulada y no hace falta ETH.
 3. Desplegar las cuatro funciones.
 4. Aplicar la migración B (`*_simulated_donor_balance_b.sql`), que elimina las políticas públicas de inserción en `users` y `donations`.
 5. Desplegar el frontend.
