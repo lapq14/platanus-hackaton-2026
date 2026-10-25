@@ -15,10 +15,10 @@ import { LEVEL_MIN_REPUTATION, LEVEL_RELEASE, LEVEL_ROMAN, REP_PER_VERIFIED_INVO
 import { useFoundationInvoices } from '../hooks/useFoundationInvoices'
 import { useMyFoundation } from '../hooks/useMyFoundation'
 import { recordInvoiceHash } from '../lib/contract'
-import { ApiError, verifySpend, type VerifySpendResult } from '../lib/api'
+import { ApiError, validateRegistration, verifySpend, type ValidateRegistrationResult, type VerifySpendResult } from '../lib/api'
 import { formatUSDT, formatUSDTCompact, RIF_RE, sha256Hex } from '../lib/format'
 import { supabase } from '../lib/supabase'
-import { BUCKETS, fileExtension, uploadFile } from '../lib/storage'
+import { BUCKETS, fileExtension, rifExtension, uploadFile } from '../lib/storage'
 import type { Foundation } from '../types'
 
 const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
@@ -343,6 +343,101 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
   )
 }
 
+const RIF_DOC_TYPES = ['application/pdf', 'image/jpeg', 'image/png']
+
+/**
+ * Registration still pending or rejected by the AI auditor. Pending = in review (a model error leaves it here:
+ * retry). Rejected = show the reason and let the organization resubmit with a new document and/or corrected data.
+ * The decision itself is always taken by the `validate-registration` function, never here.
+ */
+function RegistrationReview({ foundation, onDone }: { foundation: Foundation; onDone: () => void }) {
+  const { getAccessToken } = usePrivy()
+  const rejected = foundation.status === 'rejected'
+  const [file, setFile] = useState<File | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [rif, setRif] = useState(foundation.rif ?? '')
+  const [name, setName] = useState(foundation.name)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [last, setLast] = useState<ValidateRegistrationResult | null>(null)
+
+  const run = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error('Tu sesión expiró. Inicia sesión de nuevo.')
+      const input: { rif_doc_path?: string; rif?: string; name?: string } = {}
+      if (file) input.rif_doc_path = await uploadFile(BUCKETS.rif, `${crypto.randomUUID()}.${rifExtension(file)}`, file)
+      const nextRif = rif.trim().toUpperCase()
+      if (nextRif && nextRif !== foundation.rif) input.rif = nextRif
+      if (name.trim() && name.trim() !== foundation.name) input.name = name.trim()
+      setLast(await validateRegistration(token, input))
+      setFile(null)
+      onDone()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No pudimos validar tu registro. Intenta de nuevo.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const tone = rejected ? { border: '#B4235A', bg: '#F8E9EF', fg: '#8E1B47' } : { border: '#E8A317', bg: '#FBEFD3', fg: '#6B4A00' }
+  return (
+    <section role={rejected ? 'alert' : 'status'} style={{ border: `1.5px solid ${tone.border}`, background: tone.bg, color: tone.fg, borderRadius: '14px', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <strong>{rejected ? 'Tu registro fue rechazado' : 'Tu registro está en revisión'}</strong>
+      <span style={{ fontWeight: 600 }}>
+        {rejected
+          ? foundation.rejection_reason ?? 'No pudimos validar tu documento de RIF.'
+          : 'Nuestro auditor está validando tu RIF. Te escribiremos al correo oficial con el resultado; si tarda o falló, puedes reintentar.'}
+      </span>
+      {last?.status === 'rejected' && last.checks.length > 0 && <AgentChecks checks={last.checks} />}
+      <details open={rejected}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>{rejected ? 'Corregir y reenviar' : 'Subir otro documento o corregir datos'}</summary>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px', color: '#1B1530' }}>
+          <label htmlFor="rev-name" style={LABEL}>Nombre de la organización</label>
+          <input id="rev-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} style={INPUT} />
+          <label htmlFor="rev-rif" style={LABEL}>RIF</label>
+          <input id="rev-rif" value={rif} onChange={(e) => setRif(e.target.value.toUpperCase())} placeholder="J-00000000-0" autoComplete="off" style={{ ...INPUT, ...MONO }} />
+          <span style={LABEL}>Documento de RIF (opcional si ya subiste uno legible)</span>
+          {file ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              <FileChip file={file} onRemove={() => setFile(null)} />
+            </ul>
+          ) : (
+            <Dropzone
+              variant="box"
+              accept="application/pdf,image/jpeg,image/png"
+              icon="file"
+              title="Documento de RIF"
+              hint="PDF, JPG o PNG · máx. 10 MB"
+              onFiles={(incoming) => {
+                const f = incoming[0]
+                if (!RIF_DOC_TYPES.includes(f.type) || f.size > MAX_BYTES) {
+                  setFileError(`"${f.name}" no es válido: usa PDF, JPG o PNG de hasta 10 MB.`)
+                  return
+                }
+                setFileError(null)
+                setFile(f)
+              }}
+            />
+          )}
+          {fileError && <span role="alert" style={FIELD_ERROR}>{fileError}</span>}
+        </div>
+      </details>
+      {error && <span role="alert" style={FIELD_ERROR}>{error}</span>}
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={busy}
+        style={{ alignSelf: 'flex-start', minHeight: '46px', padding: '0 22px', borderRadius: '12px', border: 'none', background: busy ? '#ECE7F0' : '#B4235A', color: busy ? '#5A5468' : '#FFFFFF', fontFamily: 'inherit', fontSize: '15px', fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}
+      >
+        {busy ? 'Validando…' : rejected ? 'Reenviar a validación' : 'Reintentar validación'}
+      </button>
+    </section>
+  )
+}
+
 export default function PanelFundacion() {
   const { foundation, stats, loading, error, reload } = useMyFoundation()
   const { invoices, reload: reloadInvoices } = useFoundationInvoices(foundation?.id)
@@ -352,6 +447,14 @@ export default function PanelFundacion() {
   useEffect(() => {
     if (signature) void reload()
   }, [signature, reload])
+
+  // Simple polling while the auditor has not decided yet (e.g. validation running from another tab).
+  const registrationStatus = foundation?.status
+  useEffect(() => {
+    if (registrationStatus !== 'pending') return
+    const t = setInterval(() => void reload(), 10_000)
+    return () => clearInterval(t)
+  }, [registrationStatus, reload])
 
   if (loading) {
     return (
@@ -372,7 +475,7 @@ export default function PanelFundacion() {
 
   const level = toLevel(foundation.level)
   const nextLevel = level < 4 ? toLevel(level + 1) : null
-  const pending = foundation.status === 'pending'
+  const notAccepted = foundation.status === 'pending' || foundation.status === 'rejected'
   const frozen = foundation.status === 'frozen'
   const nextTotal = stats?.next_tranche_total ?? 0
   const invoicesToNext = nextLevel
@@ -387,11 +490,7 @@ export default function PanelFundacion() {
     <PageShell minHeight={1000}>
       <FoundationHeader active="resumen" level={foundation.level} reputation={foundation.reputation_score} />
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '32px 24px 64px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {pending && (
-          <div role="status" style={{ border: '1.5px solid #E8A317', background: '#FBEFD3', color: '#6B4A00', borderRadius: '14px', padding: '16px 18px', fontWeight: 600 }}>
-            Tu registro está en revisión. Te escribiremos al correo oficial cuando el auditor lo apruebe.
-          </div>
-        )}
+        {notAccepted && <RegistrationReview key={foundation.status} foundation={foundation} onDone={() => void reload()} />}
         {frozen && (
           <div role="alert" style={{ border: '1.5px solid #B4235A', background: '#F8E9EF', color: '#8E1B47', borderRadius: '14px', padding: '16px 18px', fontWeight: 600 }}>
             Tu fundación está congelada por una auditoría.{' '}
@@ -420,7 +519,7 @@ export default function PanelFundacion() {
             nextTotal={nextTotal}
             nextIndex={stats?.next_tranche_index ?? null}
             nextInvoiceNumber={nextInvoiceNumber}
-            disabled={pending || frozen || nextTotal <= 0}
+            disabled={notAccepted || frozen || nextTotal <= 0}
             onSent={() => {
               void reloadInvoices()
               void reload()

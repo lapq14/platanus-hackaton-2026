@@ -4,6 +4,8 @@ export const BUCKETS = {
   logos: 'foundation-logos',
   legal: 'legal-docs',
   invoices: 'invoices',
+  /** Private; the browser can only insert `{uuid}.{pdf|jpg|png}` at the root (intake), never read. */
+  rif: 'rif-docs',
 } as const
 
 /** Uploads a file and returns its storage path. Throws a readable error on failure. */
@@ -24,6 +26,9 @@ export async function signedInvoiceUrl(path: string): Promise<string> {
   if (error || !data) throw new Error(error?.message ?? 'No se pudo generar el enlace')
   return data.signedUrl
 }
+
+/** Extension allowed by the `rif-docs` intake policy, derived from the MIME type (never from the file name). */
+export const rifExtension = (file: File): string => (file.type === 'application/pdf' ? 'pdf' : file.type === 'image/png' ? 'png' : 'jpg')
 
 export const fileExtension = (file: File): string => {
   const fromName = file.name.split('.').pop()?.toLowerCase()

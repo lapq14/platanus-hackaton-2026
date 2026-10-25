@@ -1,5 +1,5 @@
 import { env } from './env'
-import type { AgentCheck, Donation, Foundation, User } from '../types'
+import type { AgentCheck, Donation, Foundation, Invoice, User } from '../types'
 
 /** Quick top-up amounts (USD) offered in the top-up modal. */
 export const TOPUP_PRESETS = [50, 100, 500] as const
@@ -64,8 +64,9 @@ export const donate = (token: string, foundationId: string, amount: number) =>
 export const releaseInitial = (token: string, donationId: string) =>
   callFn<ReleaseInfo>('release-initial', token, { donation_id: donationId })
 
+/** `invoices` (scope 'donor'): the invoices referenced by the tranches / refunds, read server-side. */
 export const listDonations = (token: string, scope: 'donor' | 'foundation') =>
-  callFn<{ donations: Donation[] }>('my-donations', token, { scope })
+  callFn<{ donations: Donation[]; invoices?: Invoice[] }>('my-donations', token, { scope })
 
 export interface RegisterFoundationInput {
   name: string
@@ -87,6 +88,26 @@ export interface RegisterFoundationInput {
 
 export const registerFoundation = (token: string, input: RegisterFoundationInput) =>
   callFn<{ foundation: Foundation }>('register-foundation', token, input)
+
+export interface ValidateRegistrationInput {
+  /** Intake path (bucket `rif-docs`) of a freshly uploaded RIF document; omit to re-run on the stored one. */
+  rif_doc_path?: string
+  /** Optional corrections, applied only while the registration is pending/rejected. */
+  rif?: string
+  name?: string
+}
+
+export interface ValidateRegistrationResult {
+  /** `active` = accepted; `rejected` = the auditor rejected it; `pending` is never returned (errors are thrown). */
+  status: 'active' | 'rejected'
+  checks: AgentCheck[]
+  reason: string | null
+  email: 'sent' | 'failed' | 'skipped' | 'none'
+}
+
+/** Runs the AI auditor on the caller's RIF document. Throws ApiError (502/504 = model failed, still pending). */
+export const validateRegistration = (token: string, input: ValidateRegistrationInput) =>
+  callFn<ValidateRegistrationResult>('validate-registration', token, input)
 
 /** What happened to the tranches of a verified spend: paid, nothing to pay, or the on-chain send must be retried. */
 export type SpendReleaseInfo =

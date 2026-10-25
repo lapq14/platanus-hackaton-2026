@@ -1,6 +1,7 @@
 export type UserRole = 'donor' | 'ong' | 'auditor'
 /** `ong` in the app = foundation in the product copy. */
-export type FoundationStatus = 'active' | 'pending' | 'frozen'
+/** `active` = accepted/validated by the registration auditor; `rejected` = registration rejected (can be resubmitted). */
+export type FoundationStatus = 'active' | 'pending' | 'frozen' | 'rejected'
 export type DonationStatus = 'in_escrow' | 'partially_released' | 'completed' | 'refunded'
 export type VerificationStatus = 'pending' | 'approved' | 'rejected'
 export type TrancheState = 'released' | 'in_review' | 'in_custody' | 'broken'
@@ -41,6 +42,8 @@ export interface Foundation {
   contract_address: string | null
   legal_doc_path: string | null
   legal_doc_hash: string | null
+  /** Auditor's reason when status = 'rejected'. */
+  rejection_reason?: string | null
 }
 
 /** Row of the `foundation_stats` view (no donor identity). */
