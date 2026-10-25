@@ -49,7 +49,7 @@ export default function RefundCard({ donation, refund, email }: RefundCardProps)
         {covered > 0 ? (
           <div style={ROW}>
             <span style={{ color: '#5A5468' }}>
-              {delivered.length <= 1 ? `Tramo 1 · ya entregado (${pct}%)` : `Tramos 1–${delivered.length} · ya entregados`}, cubierto por Trazo
+              {delivered.length <= 1 ? `Tramo 1 · ya entregado (${pct}%)` : `Tramos 1–${delivered.length} · ya entregados`}, cubierto por Rastro
             </span>
             <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(covered)}</span>
           </div>

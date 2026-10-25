@@ -1,18 +1,26 @@
-import type { Donation, Foundation, FoundationStats, Invoice, Refund, Tranche } from '../types'
+import type { Donation, Foundation, FoundationStats, Invoice, Refund, Tranche, TrancheUse } from '../types'
 
 // PostgREST returns numeric columns as numbers, but the database types them as `numeric`:
 // coerce defensively so the UI never concatenates strings.
 const n = (v: unknown): number => Number(v ?? 0)
 
-export const toTranche = (t: Tranche): Tranche => ({ ...t, amount: n(t.amount) })
+export const toUse = (u: TrancheUse): TrancheUse => ({ ...u, amount: n(u.amount) })
+
+export const toTranche = (t: Tranche): Tranche => ({
+  ...t,
+  amount: n(t.amount),
+  remaining: n(t.remaining),
+  uses: (t.uses ?? []).map(toUse),
+})
 
 export const toRefund = (r: Refund): Refund => ({ ...r, amount: n(r.amount) })
 
 export const toInvoice = (i: Invoice): Invoice => ({
   ...i,
   amount: n(i.amount),
+  allocated_amount: n(i.allocated_amount),
   agent_checks: Array.isArray(i.agent_checks) ? i.agent_checks : [],
-  file_paths: i.file_paths ?? [],
+  document_count: n(i.document_count),
   file_hashes: i.file_hashes ?? [],
 })
 
@@ -22,7 +30,8 @@ export const toStats = (s: FoundationStats): FoundationStats => ({
   ...s,
   released_total: n(s.released_total),
   custody_total: n(s.custody_total),
-  next_tranche_total: n(s.next_tranche_total),
+  spent_total: n(s.spent_total),
+  available_balance: n(s.available_balance),
 })
 
 export const toDonation = (d: Donation): Donation => ({

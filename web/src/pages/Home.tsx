@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import CatalogSection from '../components/CatalogSection'
 import DonorHeader from '../components/DonorHeader'
+import LevelRows from '../components/LevelRows'
 import PageShell from '../components/PageShell'
 
 /**
  * Intro hero. The choreography lives entirely in CSS (src/index.css): timings, geometry, font
  * (Bricolage Grotesque 800), letter-spacing and line-height are FINAL: do not change them.
- * Only this component re-renders when the animation is replayed.
  */
 function Hero() {
-  const [runKey, setRunKey] = useState(0)
   const [fontsReady, setFontsReady] = useState(false)
 
   // Wait for the fonts so the ring lands exactly on the "o" (no font swap jump).
@@ -24,17 +22,10 @@ function Hero() {
     }
   }, [])
 
-  const replay = () => {
-    setFontsReady(false)
-    setTimeout(() => setFontsReady(true), 40)
-    setRunKey((k) => k + 1)
-  }
-
   if (!fontsReady) return <section style={{ minHeight: '583px' }} aria-hidden="true" />
 
   return (
     <section
-      key={runKey}
       style={{ minHeight: '583px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0 56px', position: 'relative', overflow: 'hidden' }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '48px' }}>
@@ -91,13 +82,6 @@ function Hero() {
               Soy fundación
             </Link>
           </div>
-          <button
-            type="button"
-            onClick={replay}
-            style={{ minHeight: '44px', padding: '0 14px', border: 'none', background: 'transparent', color: '#5A5468', fontFamily: 'inherit', fontSize: '14px', textDecoration: 'underline', cursor: 'pointer' }}
-          >
-            Ver la animación de nuevo
-          </button>
         </div>
       </div>
     </section>
@@ -109,7 +93,7 @@ export default function Home() {
     <PageShell minHeight={0}>
       <DonorHeader active="home" />
       <Hero />
-      <CatalogSection variant="home" />
+      <LevelRows />
     </PageShell>
   )
 }

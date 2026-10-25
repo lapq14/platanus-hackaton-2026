@@ -1,5 +1,5 @@
 import { env } from './env'
-import type { AgentCheck, Donation, Foundation, User } from '../types'
+import type { AgentCheck, Donation, Foundation, FoundationTrace, FundsView, Invoice, OwnInvoice, OwnProfile, User } from '../types'
 
 /** Quick top-up amounts (USD) offered in the top-up modal. */
 export const TOPUP_PRESETS = [50, 100, 500] as const
@@ -22,12 +22,13 @@ interface ErrorBody {
   message?: string
 }
 
-export async function callFn<T>(name: string, token: string, body: object): Promise<T> {
+/** Calls an Edge Function. `token` is the Privy access token; pass null for public endpoints. */
+export async function callFn<T>(name: string, token: string | null, body: object): Promise<T> {
   const res = await fetch(`${env.supabaseUrl}/functions/v1/${name}`, {
     method: 'POST',
     headers: {
       apikey: env.supabasePublishableKey,
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -64,8 +65,29 @@ export const donate = (token: string, foundationId: string, amount: number) =>
 export const releaseInitial = (token: string, donationId: string) =>
   callFn<ReleaseInfo>('release-initial', token, { donation_id: donationId })
 
+/** `invoices` are the invoices referenced by the donor's tranche uses and refunds (only for scope 'donor'). */
 export const listDonations = (token: string, scope: 'donor' | 'foundation') =>
-  callFn<{ donations: Donation[] }>('my-donations', token, { scope })
+  callFn<{ donations: Donation[]; invoices?: Invoice[] }>('my-donations', token, { scope })
+
+/** Public: the full traceability of a foundation's funds. No login, no donor identity. */
+export const foundationTrace = (foundationId: string) => callFn<FoundationTrace>('foundation-trace', null, { foundation_id: foundationId })
+
+/** 60 s signed URL of a document. Verified invoice documents are public; the rest need the owner's or auditor's token. */
+export const documentUrl = (invoiceId: string, kind: 'invoice' | 'origin' | 'destination', index: number, token: string | null) =>
+  callFn<{ url: string }>('document-url', token, { invoice_id: invoiceId, kind, index })
+
+export interface ReportSpendInput {
+  concept: string
+  amount: number
+  supplier_rif: string
+  file_paths: string[]
+  file_hash: string | null
+  file_hashes: string[]
+}
+
+/** Reports a spend. The server validates it against the foundation's available balance. */
+export const reportSpend = (token: string, input: ReportSpendInput) =>
+  callFn<{ invoice: { id: string; number: string } }>('report-spend', token, input)
 
 export interface RegisterFoundationInput {
   name: string
@@ -95,15 +117,64 @@ export type SpendReleaseInfo =
   | { status: 'pending'; error: string; message: string }
 
 export interface VerifySpendResult {
-  status: 'verified' | 'rejected'
+  /** `needs_changes`: a check failed but attempts are left; the spend stays open so the documents can be corrected. */
+  status: 'verified' | 'rejected' | 'needs_changes'
   checks: AgentCheck[]
   review_note: string
   /** Present when status = 'verified'. */
   release?: SpendReleaseInfo
+  /** Present when status = 'verified': the part of the spend attributed to donor contributions. */
+  allocated_usd?: number
   /** Present when status = 'rejected': the foundation was frozen and the donors refunded 100%. */
   refund?: { refunds: number; refunded_usd: number; foundation_status: 'frozen' }
+  /** Present when status = 'needs_changes'. */
+  attempts?: number
+  max_attempts?: number
+  evidence_due_at?: string | null
+}
+
+export interface VerifySpendInput {
+  invoice_id: string
+  /** Paths issued by upload-url. Omit a document to keep the one stored from the previous attempt. */
+  origin_path?: string
+  destination_path?: string
+  invoice_paths?: string[]
+  file_hash?: string | null
+  file_hashes?: string[]
 }
 
 /** Runs the AI + registry verification of the two spend documents (origin proof, destination business doc). */
-export const verifySpend = (token: string, invoiceId: string, originPath: string, destinationPath: string) =>
-  callFn<VerifySpendResult>('verify-spend', token, { invoice_id: invoiceId, origin_path: originPath, destination_path: destinationPath })
+export const verifySpend = (token: string, input: VerifySpendInput) => callFn<VerifySpendResult>('verify-spend', token, input)
+
+// ---- Foundation owner tools ----------------------------------------------------------------------------------
+
+export type UploadKind = 'invoice' | 'spend_origin' | 'spend_destination' | 'appeal' | 'logo'
+
+/** Asks the server for a signed upload URL under the caller's foundation folder. */
+export const uploadUrl = (token: string, kind: UploadKind, ext: string) =>
+  callFn<{ bucket: string; path: string; token: string }>('upload-url', token, { kind, ext })
+
+export const foundationMe = (token: string) => callFn<OwnProfile>('foundation-me', token, {})
+
+export const foundationFunds = (token: string) => callFn<FundsView>('foundation-funds', token, {})
+
+export const foundationInvoices = (token: string) => callFn<{ invoices: OwnInvoice[]; max_attempts: number }>('foundation-invoices', token, {})
+
+export interface UpdateProfileInput {
+  description?: string
+  category?: string
+  country?: string
+  city?: string
+  instagram_url?: string
+  tiktok_url?: string
+  x_url?: string
+  logo_path?: string
+  wallet_address?: string
+}
+
+export const updateProfile = (token: string, input: UpdateProfileInput) => callFn<{ foundation: Foundation }>('update-profile', token, input)
+
+export const submitAppeal = (token: string, reason: string, evidencePaths: string[]) =>
+  callFn<{ appeal: { id: string; status: string; created_at: string }; message: string }>('submit-appeal', token, { reason, evidence_paths: evidencePaths })
+
+export const claimFoundation = (token: string, code: string) => callFn<{ foundation_id: string; name: string }>('claim-foundation', token, { code })

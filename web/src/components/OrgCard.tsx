@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom'
-import { LEVEL_RELEASE, LEVEL_ROMAN, toLevel } from '../config/levels'
+import { LEVEL_RELEASE, toLevel } from '../config/levels'
+import type { ReputationState } from '../types'
+import ReputationChip from './ReputationChip'
 
 /** Catalog view model of a foundation. */
 export interface CatalogFoundation {
@@ -9,11 +11,14 @@ export interface CatalogFoundation {
   level: number
   reputation: number
   sealedInvoices: number
+  reputationState: ReputationState
 }
 
 export default function OrgCard({ foundation }: { foundation: CatalogFoundation }) {
   const level = toLevel(foundation.level)
   const rep = `${foundation.reputation}%`
+  // A foundation without history has no reputation to show yet: no percentage and no bar, just the neutral chip.
+  const noHistory = foundation.reputationState === 'sin_historial'
   return (
     <Link
       to={`/fundacion/${foundation.id}`}
@@ -44,17 +49,24 @@ export default function OrgCard({ foundation }: { foundation: CatalogFoundation 
             color: '#8E1B47',
           }}
         >
-          NIVEL {LEVEL_ROMAN[level]}
+          NIVEL {level}
         </span>
       </div>
       <span style={{ fontSize: '20px', fontWeight: 700, lineHeight: 1.15, minHeight: '46px' }}>{foundation.name}</span>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
           <span style={{ color: '#5A5468' }}>Reputación</span>
-          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{rep}</span>
+          {noHistory ? (
+            <ReputationChip state="sin_historial" />
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              {foundation.reputationState === 'inconfiable' && <ReputationChip state="inconfiable" />}
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{rep}</span>
+            </span>
+          )}
         </div>
         <div style={{ height: '6px', borderRadius: '3px', background: '#ECE7F0' }}>
-          <div style={{ height: '6px', borderRadius: '3px', background: '#1B1530', width: rep }} />
+          {!noHistory && <div style={{ height: '6px', borderRadius: '3px', background: foundation.reputationState === 'inconfiable' ? '#B4235A' : '#1B1530', width: rep }} />}
         </div>
       </div>
       <div

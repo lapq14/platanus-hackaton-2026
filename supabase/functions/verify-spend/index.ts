@@ -1,28 +1,38 @@
 // Verifies what a foundation spent its money on, using two documents.
-// POST { invoice_id, origin_path, destination_path } -> { status, checks, review_note }
-//   origin_path       storage path (bucket `invoices`) of the proof that the ORIGIN account belongs to the foundation
-//   destination_path  storage path of the document with the destination business RIF and DESTINATION account
+// POST { invoice_id, origin_path?, destination_path?, invoice_paths?, file_hash?, file_hashes? }
+//   -> { status: 'verified' | 'rejected' | 'needs_changes', checks, review_note, ... }
+//   origin_path       proof that the ORIGIN account belongs to the foundation (kind 'spend_origin')
+//   destination_path  document with the destination business RIF and DESTINATION account (kind 'spend_destination')
+//   invoice_paths     optional replacement of the invoice's own documents, 1 to 5 files (kind 'invoice')
+// Every path must have been issued by upload-url. On a retry, a document that is not sent again keeps using the one
+// stored from the previous attempt, and the replaced files are deleted.
 // Requires an `ong` user that owns the invoice's foundation; the invoice must be `in_review` (or `verified`
 // with its release still pending: then only the release is retried and the documents are not needed).
 //
-// Flow: submit_spend_for_review (targeted tranches -> in_review) -> model -> resolve_spend_verdict ->
-//   verified: releaseSpend (one on-chain transfer + record_spend_release)
+// Flow: submit_spend_for_review (balance check) -> model -> verdict
+//   verified: resolve_spend_verdict attributes the spend to donors (FIFO over released tranches, recorded in
+//             tranche_uses) and marks the next tranche of every donation that reached 50% consumed for unlock;
+//             then releaseSpend sends ONE on-chain transfer for what was unlocked (record_spend_release).
+//   failed, attempts left: record_spend_attempt keeps the spend open (status `needs_changes`) so the foundation can
+//             upload corrected documents. The last allowed attempt that still fails is a rejection.
 //   rejected: the same SQL transaction freezes the foundation, breaks the unreleased tranches and refunds
 //             100% of every affected donation to the donors' simulated balance.
+// An open spend has 7 days (evidence_due_at); past that, it makes the foundation suspicious (see flag_overdue_spends).
 // The invoice is marked `verified` ONLY if both the deterministic DB lookups and the Anthropic verdict pass.
-// If the model verdict cannot be obtained the invoice stays `in_review` (tranches too) and an error is returned.
-// If the on-chain send fails (e.g. escrow without ETH) the invoice stays `verified` with its tranches `in_review`
+// If the model verdict cannot be obtained the invoice stays `in_review` and the attempt is NOT counted.
+// If the on-chain send fails (e.g. escrow without ETH) the invoice stays `verified` with the unlocked tranches `in_review`
 // and the response carries release.status = 'pending'; calling again with the same invoice_id retries.
 // Required secret: ANTHROPIC_API_KEY (supabase secrets set ANTHROPIC_API_KEY=...).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
-import Anthropic from 'npm:@anthropic-ai/sdk'
-import { encodeBase64 } from 'jsr:@std/encoding@1/base64'
-import { admin, CORS, dbError, env, fail, HttpError, json, readBody, releaseSpend, requireUser, type SpendReleaseResult } from '../_shared/core.ts'
+import { askJson, docBlock, loadDoc, type Doc } from '../_shared/ai.ts'
+import { admin, CORS, dbError, fail, HttpError, json, readBody, releaseSpend, requireUser, type SpendReleaseResult } from '../_shared/core.ts'
+import { digits, namesMatch } from '../_shared/names.ts'
+import { MAX_SPEND_ATTEMPTS } from '../_shared/owner.ts'
+import { claimUploads, discardFiles, ownPath } from '../_shared/uploads.ts'
 
 const RIF_RE = /^[JGVEPC]-\d{8}-\d$/
 const BUCKET = 'invoices'
-const MAX_BYTES = 10 * 1024 * 1024
-const MODEL = 'claude-opus-5-5'
+const MAX_INVOICE_FILES = 5
 
 type CheckId = 'origin_account_owned' | 'destination_account_business' | 'rif_exists' | 'rif_matches_destination'
 const CHECK_IDS: CheckId[] = ['origin_account_owned', 'destination_account_business', 'rif_exists', 'rif_matches_destination']
@@ -95,100 +105,28 @@ Extract the facts exactly as printed (empty string when absent). Account numbers
 - rif_matches_destination: in document 2 the RIF belongs to the same business that owns the destination account.
 You only judge what the documents show; the platform separately checks its own registry. Keep each detail to one short sentence in Spanish.`
 
-const digits = (v: string) => v.replace(/\D/g, '')
-
-const normalizeName = (v: string) =>
-  v
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .replace(/\b(c a|ca|s a|sa|a c|ac|fundacion|asociacion civil)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-const namesMatch = (a: string, b: string) => {
-  const x = normalizeName(a)
-  const y = normalizeName(b)
-  return x.length >= 3 && y.length >= 3 && (x === y || x.includes(y) || y.includes(x))
-}
-
-function sniffMime(bytes: Uint8Array): 'application/pdf' | 'image/png' | 'image/jpeg' | null {
-  const at = (s: string) => [...s].every((c, i) => bytes[i] === c.charCodeAt(0))
-  if (at('%PDF')) return 'application/pdf'
-  if (bytes[0] === 0x89 && at('\x89PNG')) return 'image/png'
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg'
-  return null
-}
-
-async function loadDoc(path: string) {
-  const { data, error } = await admin.storage.from(BUCKET).download(path)
-  if (error || !data) throw new HttpError(400, 'file_not_found', 'No se encontró uno de los documentos subidos')
-  if (data.size === 0 || data.size > MAX_BYTES) throw new HttpError(400, 'invalid_file', 'Cada documento debe pesar hasta 10 MB')
-  const bytes = new Uint8Array(await data.arrayBuffer())
-  const mime = sniffMime(bytes)
-  if (!mime) throw new HttpError(400, 'invalid_file', 'Usa PDF, JPG o PNG')
-  return { mime, base64: encodeBase64(bytes) }
-}
-
-type Doc = Awaited<ReturnType<typeof loadDoc>>
-
-const docBlock = (d: Doc) =>
-  d.mime === 'application/pdf'
-    ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: d.base64 } }
-    : { type: 'image' as const, source: { type: 'base64' as const, media_type: d.mime, data: d.base64 } }
-
 /** Asks Claude for a structured verdict. Any failure throws an HttpError: the invoice then stays in_review. */
-async function askModel(origin: Doc, destination: Doc, foundation: { name: string; rif: string | null }): Promise<Verdict> {
-  const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') })
-  const facts = `Foundation facts (from our database):\n- Name: ${foundation.name}\n- RIF: ${foundation.rif ?? '(not registered)'}`
-  try {
-    const msg = await client.messages.create({
-      model: MODEL,
-      max_tokens: 4000,
-      system: SYSTEM,
-      output_config: { effort: 'high', format: { type: 'json_schema', schema: VERDICT_SCHEMA } },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Document 1: proof of ORIGIN account ownership.' },
-            docBlock(origin),
-            { type: 'text', text: 'Document 2: destination business RIF and DESTINATION account.' },
-            docBlock(destination),
-            { type: 'text', text: `${facts}\n\nExtract the data and return the verdict.` },
-          ],
-        },
-      ],
-    } as Anthropic.MessageCreateParamsNonStreaming)
-
-    if (msg.stop_reason === 'refusal' || msg.stop_reason === 'max_tokens') {
-      console.error('verify-spend: unusable stop_reason', msg.stop_reason)
-      throw new HttpError(502, 'ai_unavailable', 'El agente no pudo emitir un veredicto. La factura sigue en revisión.')
-    }
-    const block = msg.content.find((b) => b.type === 'text')
-    if (!block || block.type !== 'text') throw new Error('no text block')
-    return parseVerdict(JSON.parse(block.text))
-  } catch (e) {
-    if (e instanceof HttpError) throw e
-    // Most specific first.
-    if (e instanceof Anthropic.RateLimitError) {
-      throw new HttpError(429, 'ai_rate_limited', 'El agente está saturado. Intenta de nuevo en un minuto; la factura sigue en revisión.')
-    }
-    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
-      console.error('verify-spend: Anthropic credentials rejected')
-      throw new HttpError(500, 'ai_misconfigured', 'El agente no está configurado correctamente')
-    }
-    if (e instanceof Anthropic.APIConnectionError) {
-      throw new HttpError(502, 'ai_unavailable', 'No se pudo contactar al agente. La factura sigue en revisión.')
-    }
-    if (e instanceof Anthropic.APIError) {
-      console.error('verify-spend: Anthropic API error', e.status)
-      throw new HttpError(502, 'ai_unavailable', 'El agente no pudo emitir un veredicto. La factura sigue en revisión.')
-    }
-    console.error('verify-spend: malformed model output', e instanceof Error ? e.message : e)
-    throw new HttpError(502, 'ai_malformed', 'El agente devolvió una respuesta inválida. La factura sigue en revisión.')
-  }
+function askModel(origin: Doc, destination: Doc, foundation: { name: string; rif: string | null; legalName?: string | null }): Promise<Verdict> {
+  const facts = [
+    'Foundation facts (from our database):',
+    `- Name: ${foundation.name}`,
+    ...(foundation.legalName && foundation.legalName !== foundation.name ? [`- Legal name (validated from its RIF document): ${foundation.legalName}`] : []),
+    `- RIF: ${foundation.rif ?? '(not registered)'}`,
+  ].join('\n')
+  return askJson({
+    label: 'verify-spend',
+    system: SYSTEM,
+    schema: VERDICT_SCHEMA,
+    pendingNote: 'La factura sigue en revisión.',
+    parse: parseVerdict,
+    content: [
+      { type: 'text', text: 'Document 1: proof of ORIGIN account ownership.' },
+      docBlock(origin),
+      { type: 'text', text: 'Document 2: destination business RIF and DESTINATION account.' },
+      docBlock(destination),
+      { type: 'text', text: `${facts}\n\nExtract the data and return the verdict.` },
+    ],
+  })
 }
 
 /** Defensive shape validation: the schema should guarantee it, but never trust it for an approval. */
@@ -218,6 +156,11 @@ async function tryRelease(invoiceId: string): Promise<ReleaseInfo> {
   }
 }
 
+const allocatedUsd = async (invoiceId: string): Promise<number> => {
+  const { data } = await admin.from('invoices').select('allocated_amount').eq('id', invoiceId).maybeSingle()
+  return Number(data?.allocated_amount ?? 0)
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
@@ -227,8 +170,6 @@ Deno.serve(async (req) => {
 
     const body = await readBody(req)
     const invoiceId = body.invoice_id
-    const originPath = body.origin_path
-    const destPath = body.destination_path
     if (typeof invoiceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(invoiceId)) {
       throw new HttpError(400, 'invalid_body', 'invoice_id inválido')
     }
@@ -243,7 +184,7 @@ Deno.serve(async (req) => {
 
     const { data: invoice, error: iErr } = await admin
       .from('invoices')
-      .select('id, foundation_id, status, agent_checks, review_note')
+      .select('id, foundation_id, status, agent_checks, review_note, attempts, evidence_due_at, file_path, file_paths, spend_origin_path, spend_destination_path')
       .eq('id', invoiceId)
       .maybeSingle()
     if (iErr) throw dbError(iErr)
@@ -252,32 +193,68 @@ Deno.serve(async (req) => {
     // Retry of a verified invoice whose release did not complete: no documents, no model call.
     if (invoice.status === 'verified') {
       const release = await tryRelease(invoice.id)
-      return json({ status: 'verified', checks: invoice.agent_checks, review_note: invoice.review_note ?? '', release })
+      return json({ status: 'verified', checks: invoice.agent_checks, review_note: invoice.review_note ?? '', release, allocated_usd: await allocatedUsd(invoice.id) })
     }
     if (invoice.status !== 'in_review') throw new HttpError(409, 'invoice_not_pending', 'La factura ya fue resuelta')
-
-    if (typeof originPath !== 'string' || typeof destPath !== 'string' || !originPath || !destPath) {
-      throw new HttpError(400, 'invalid_body', 'Sube los dos documentos')
-    }
-    if (originPath === destPath) throw new HttpError(400, 'invalid_body', 'Los dos documentos deben ser distintos')
     if (foundation.status !== 'active') throw new HttpError(403, 'foundation_suspended', 'Fundación suspendida')
 
-    const prefix = `${foundation.id}/`
-    for (const p of [originPath, destPath]) {
-      if (!p.startsWith(prefix) || p.includes('..') || p.length > 300) {
-        throw new HttpError(400, 'invalid_body', 'Ruta de documento inválida')
+    // --- Documents: fresh uploads replace the stored ones; anything not sent again is reused -----------------------
+    const freshOrigin = typeof body.origin_path === 'string' && body.origin_path !== invoice.spend_origin_path ? ownPath(foundation.id, body.origin_path, ['spend_origin']) : null
+    const freshDest = typeof body.destination_path === 'string' && body.destination_path !== invoice.spend_destination_path ? ownPath(foundation.id, body.destination_path, ['spend_destination']) : null
+    const rawInvoicePaths = Array.isArray(body.invoice_paths) ? body.invoice_paths : []
+    if (rawInvoicePaths.length > MAX_INVOICE_FILES) throw new HttpError(400, 'invalid_body', 'Máximo 5 archivos por factura')
+    const freshInvoice = rawInvoicePaths.length > 0 ? rawInvoicePaths.map((p) => ownPath(foundation.id, p, ['invoice'])) : null
+
+    const originPath = freshOrigin ?? invoice.spend_origin_path
+    const destPath = freshDest ?? invoice.spend_destination_path
+    if (!originPath || !destPath) throw new HttpError(400, 'invalid_body', 'Sube los dos documentos')
+    if (originPath === destPath) throw new HttpError(400, 'invalid_body', 'Los dos documentos deben ser distintos')
+
+    if (freshOrigin || freshDest || freshInvoice) {
+      if (freshOrigin) await claimUploads(foundation.id, [freshOrigin], ['spend_origin'])
+      if (freshDest) await claimUploads(foundation.id, [freshDest], ['spend_destination'])
+      if (freshInvoice) await claimUploads(foundation.id, freshInvoice, ['invoice'])
+      // Persist right away: if the model is unavailable the next retry must find the new documents already stored.
+      const hashes = Array.isArray(body.file_hashes) ? body.file_hashes.filter((h): h is string => typeof h === 'string').slice(0, MAX_INVOICE_FILES) : []
+      const update: Record<string, unknown> = { spend_origin_path: originPath, spend_destination_path: destPath }
+      if (freshInvoice) {
+        update.file_path = freshInvoice[0]
+        update.file_paths = freshInvoice
+        update.file_hashes = hashes
+        update.file_hash = typeof body.file_hash === 'string' ? body.file_hash.slice(0, 80) : null
       }
+      const { error: uErr } = await admin.from('invoices').update(update).eq('id', invoice.id).eq('status', 'in_review')
+      if (uErr) throw dbError(uErr)
+      const replaced = [
+        ...(freshOrigin && invoice.spend_origin_path ? [invoice.spend_origin_path] : []),
+        ...(freshDest && invoice.spend_destination_path ? [invoice.spend_destination_path] : []),
+        ...(freshInvoice ? ((invoice.file_paths as string[] | null) ?? []) : []),
+      ]
+      await discardFiles(foundation.id, BUCKET, replaced)
     }
 
-    // Targeted tranches -> in_review BEFORE the model call (idempotent; a model failure leaves them in review).
+    // Balance check BEFORE the model call (idempotent): a spend cannot exceed the foundation's available balance.
     const { error: subErr } = await admin.rpc('submit_spend_for_review', {
       p_invoice_id: invoice.id,
       p_foundation_id: foundation.id,
     })
     if (subErr) throw dbError(subErr)
 
-    const [origin, destination] = await Promise.all([loadDoc(originPath), loadDoc(destPath)])
-    const verdict = await askModel(origin, destination, { name: foundation.name, rif: foundation.rif })
+    const [origin, destination] = await Promise.all([loadDoc(BUCKET, originPath), loadDoc(BUCKET, destPath)])
+
+    // RIF and legal name already validated by the registration auditor (absent for foundations that predate it:
+    // those keep using what they declared).
+    const { data: validated, error: vErr } = await admin
+      .from('foundation_verifications')
+      .select('rif_normalized, legal_name')
+      .eq('foundation_id', foundation.id)
+      .eq('verdict', 'approved')
+      .maybeSingle()
+    if (vErr) throw dbError(vErr)
+    const expectedRif = validated?.rif_normalized ?? foundation.rif
+    const legalName = validated?.legal_name ?? null
+
+    const verdict = await askModel(origin, destination, { name: foundation.name, rif: expectedRif, legalName })
     // --- Deterministic DB-side checks (a-c), independent of the model ---------------------------
     const destRif = verdict.destination.business_rif.trim().toUpperCase()
     const destAccount = digits(verdict.destination.account_number)
@@ -297,8 +274,8 @@ Deno.serve(async (req) => {
 
     const det: Record<CheckId, { passed: boolean; detail: string }> = {
       origin_account_owned: (() => {
-        const nameOk = namesMatch(verdict.origin.holder_name, foundation.name)
-        const rifOk = originRif === '' || originRif === foundation.rif
+        const nameOk = namesMatch(verdict.origin.holder_name, foundation.name) || (legalName !== null && namesMatch(verdict.origin.holder_name, legalName))
+        const rifOk = originRif !== '' && originRif === expectedRif
         const hasId = originRif !== '' || verdict.origin.holder_name.trim() !== ''
         return nameOk && rifOk && hasId
           ? { passed: true, detail: 'El titular coincide con el nombre y RIF de la fundación.' }
@@ -325,10 +302,35 @@ Deno.serve(async (req) => {
       return { id, label: LABELS[id], passed, detail: passed ? det[id].detail : !det[id].passed ? det[id].detail : m.detail.slice(0, 300) }
     })
     const failed = checks.filter((c) => !c.passed)
+
+    // --- A failed check with attempts left keeps the spend open so the documents can be corrected -----------------
+    const attemptNumber = Number(invoice.attempts ?? 0) + 1
+    if (failed.length > 0 && attemptNumber < MAX_SPEND_ATTEMPTS) {
+      const feedback = `Hay verificaciones sin cumplir: ${failed.map((c) => c.label).join('; ')}. Sube documentos corregidos para volver a intentarlo.`
+      const { data: attempts, error: rErr } = await admin.rpc('record_spend_attempt', {
+        p_invoice_id: invoice.id,
+        p_foundation_id: foundation.id,
+        p_checks: checks,
+        p_note: feedback,
+        p_origin_path: originPath,
+        p_destination_path: destPath,
+        p_actor_id: user.id,
+      })
+      if (rErr) throw dbError(rErr)
+      return json({
+        status: 'needs_changes',
+        checks,
+        review_note: feedback,
+        attempts: Number(attempts ?? attemptNumber),
+        max_attempts: MAX_SPEND_ATTEMPTS,
+        evidence_due_at: invoice.evidence_due_at,
+      })
+    }
+
     const status = failed.length === 0 ? 'verified' : 'rejected'
     const note = status === 'verified'
       ? 'Gasto verificado: cuenta de origen y negocio de destino confirmados.'
-      : `Gasto rechazado: ${failed.map((c) => c.label).join('; ')}.`
+      : `Gasto rechazado tras ${attemptNumber} ${attemptNumber === 1 ? 'intento' : 'intentos'}: ${failed.map((c) => c.label).join('; ')}.`
 
     // Ownership-guarded verdict; a rejection also freezes, breaks and refunds in the same transaction.
     const { error: applyErr } = await admin.rpc('resolve_spend_verdict', {
@@ -345,7 +347,7 @@ Deno.serve(async (req) => {
 
     if (status === 'verified') {
       const release = await tryRelease(invoice.id)
-      return json({ status, checks, review_note: note, release })
+      return json({ status, checks, review_note: note, release, allocated_usd: await allocatedUsd(invoice.id) })
     }
 
     const { data: refunds, error: rErr } = await admin.from('refunds').select('amount').eq('invoice_id', invoice.id)

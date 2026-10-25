@@ -21,7 +21,7 @@ export default function AgentChecks({ checks }: { checks: AgentCheck[] }) {
           </span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
             <strong style={{ fontSize: '15px' }}>{c.label}</strong>
-            <span style={{ fontSize: '13px', color: '#5A5468' }}>{c.detail}</span>
+            {c.detail && <span style={{ fontSize: '13px', color: '#5A5468' }}>{c.detail}</span>}
           </div>
         </div>
       ))}

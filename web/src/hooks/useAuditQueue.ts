@@ -10,11 +10,9 @@ export interface QueueItem {
   affectedDonors: number
 }
 
-interface Row extends Invoice {
-  foundation: { name: string } | null
-}
+const POLL_MS = 15_000
 
-/** Audit queue: invoices waiting for a decision, with Realtime refresh. */
+/** Audit queue: invoices waiting for a decision (public view, no document paths), refreshed by polling. */
 export function useAuditQueue() {
   const [items, setItems] = useState<QueueItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -22,8 +20,8 @@ export function useAuditQueue() {
 
   const load = useCallback(async () => {
     const { data, error: err } = await supabase
-      .from('invoices')
-      .select('*, foundation:foundations(name)')
+      .from('invoices_public')
+      .select('*')
       .eq('status', 'in_review')
       .order('uploaded_at', { ascending: true })
     if (err) {
@@ -31,17 +29,22 @@ export function useAuditQueue() {
       setLoading(false)
       return
     }
-    const rows = (data ?? []) as Row[]
+    const rows = (data ?? []) as Invoice[]
     const ids = [...new Set(rows.map((r) => r.foundation_id))]
     const stats = new Map<string, FoundationStats>()
+    const names = new Map<string, string>()
     if (ids.length > 0) {
-      const s = await supabase.from('foundation_stats').select('*').in('foundation_id', ids)
+      const [s, f] = await Promise.all([
+        supabase.from('foundation_stats').select('*').in('foundation_id', ids),
+        supabase.from('foundations').select('id,name').in('id', ids),
+      ])
       for (const r of (s.data ?? []) as FoundationStats[]) stats.set(r.foundation_id, toStats(r))
+      for (const r of (f.data ?? []) as { id: string; name: string }[]) names.set(r.id, r.name)
     }
     setItems(
       rows.map((r) => ({
         invoice: toInvoice(r),
-        foundationName: r.foundation?.name ?? 'Fundación',
+        foundationName: names.get(r.foundation_id) ?? 'Fundación',
         affectedDonors: stats.get(r.foundation_id)?.affected_donors ?? 0,
       })),
     )
@@ -51,13 +54,10 @@ export function useAuditQueue() {
 
   useEffect(() => {
     void load()
-    const channel = supabase
-      .channel('audit-queue')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => void load())
-      .subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void load()
+    }, POLL_MS)
+    return () => clearInterval(t)
   }, [load])
 
   return { items, loading, error, reload: load }

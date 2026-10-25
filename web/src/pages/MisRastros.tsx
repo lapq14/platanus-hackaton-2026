@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { usePrivy } from '@privy-io/react-auth'
+import DocumentViewer from '../components/DocumentViewer'
 import DonorHeader from '../components/DonorHeader'
 import Modal from '../components/Modal'
 import PageShell from '../components/PageShell'
@@ -8,115 +9,144 @@ import RefundCard from '../components/RefundCard'
 import SignInPrompt from '../components/SignInPrompt'
 import StatCard from '../components/StatCard'
 import TramoIcon from '../components/TramoIcon'
-import TramoTimeline, { type TimelineStep } from '../components/TramoTimeline'
+import TramoTimeline, { type StepUse, type TimelineStep } from '../components/TramoTimeline'
 import { PrimaryButton, SecondaryButton } from '../components/Buttons'
-import { LEVEL_RELEASE, LEVEL_ROMAN, toLevel } from '../config/levels'
+import { LEVEL_RELEASE, UNLOCK_THRESHOLD_PCT, toLevel } from '../config/levels'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import { useMyDonations } from '../hooks/useMyDonations'
-import { explorerAddress, explorerTx } from '../lib/chain'
-import { formatUSDT, formatUSDTCompact, shortHash } from '../lib/format'
-import { signedInvoiceUrl } from '../lib/storage'
-import type { Donation, Invoice } from '../types'
+import { explorerAddress } from '../lib/chain'
+import { formatDate, formatUSDT, formatUSDTCompact, shortHash } from '../lib/format'
+import type { Donation, Invoice, Tranche } from '../types'
 
 const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
 
+const tranchesOf = (d: Donation): Tranche[] => d.tranches ?? []
+const usedOf = (t: Tranche): number => (t.uses ?? []).reduce((s, u) => s + u.amount, 0)
+
 /** One-line status of a donation for the list. */
 function statusLine(d: Donation): { text: string; color: string; weight: number } {
-  const tranches = d.tranches ?? []
+  const tranches = tranchesOf(d)
   if (d.status === 'refunded' || tranches.some((t) => t.state === 'broken')) {
     const refunded = d.refunds?.[0]?.amount ?? d.amount_refunded
     return { text: `Sello roto · ${formatUSDT(refunded)} devueltos`, color: '#B4235A', weight: 600 }
   }
   const pending = tranches.find((t) => t.state !== 'released')
-  if (!pending) return { text: `Rastro completo · ${tranches.length} de ${tranches.length}`, color: '#1A7F52', weight: 600 }
-  return { text: `Tramo ${pending.index} ${pending.state === 'in_review' ? 'en revisión' : 'en custodia'}`, color: '#5A5468', weight: 400 }
+  if (!pending) return { text: `Todos los tramos entregados · ${tranches.length} de ${tranches.length}`, color: '#1A7F52', weight: 600 }
+  return {
+    text: pending.state === 'in_review' ? `Tramo ${pending.index} desbloqueándose` : `Tramo ${pending.index} en custodia`,
+    color: '#5A5468',
+    weight: 400,
+  }
+}
+
+/** "Insumos médicos · Factura N° 000204 · Farmacia San Rafael" */
+function useLabel(inv: Invoice | undefined): string {
+  if (!inv) return 'Gasto verificado'
+  return `${inv.concept} · Factura ${inv.number}${inv.supplier_name ? ` · ${inv.supplier_name}` : ''}`
 }
 
 function buildSteps(d: Donation, invoices: Record<string, Invoice>): TimelineStep[] {
+  const tranches = tranchesOf(d)
   const level = toLevel(d.foundation?.level ?? 1)
   const pct = d.initial_pct ?? LEVEL_RELEASE[level]
-  return (d.tranches ?? []).map<TimelineStep>((t) => {
-    const prefix = `Paso ${t.index} · `
-    const inv = t.invoice_id ? invoices[t.invoice_id] : undefined
-    if (t.index === 1) {
-      return t.state === 'released'
-        ? { state: t.state, title: `${prefix}entrega inicial`, amount: t.amount, description: `Liberado al donar (Nivel ${LEVEL_ROMAN[level]} = ${pct}%).`, hash: t.tx_hash ? { prefix: 'tx', value: t.tx_hash } : undefined }
-        : { state: t.state, title: `${prefix}entrega inicial`, amount: t.amount, description: t.state === 'broken' ? 'No se liberó: tu donación fue reembolsada a tu saldo.' : 'La entrega inicial está en proceso.' }
-    }
+  return tranches.map<TimelineStep>((t, pos) => {
+    const prefix = `Tramo ${t.index} de ${tranches.length} · `
     switch (t.state) {
-      case 'released':
+      case 'released': {
+        const unlockInv = t.invoice_id ? invoices[t.invoice_id] : undefined
+        const used = usedOf(t)
+        const uses: StepUse[] = [...(t.uses ?? [])]
+          .sort((a, b) => a.created_at.localeCompare(b.created_at))
+          .map((u) => ({ label: useLabel(invoices[u.invoice_id]), amount: u.amount, date: formatDate(u.created_at) }))
+        const origin =
+          t.index === 1
+            ? `Entregado a la fundación al donar (${pct}% de tu aporte).`
+            : unlockInv
+              ? `Desbloqueado al verificarse «${unlockInv.concept}».`
+              : 'Desbloqueado al verificarse un gasto.'
+        const balance = t.remaining > 0 ? ` Disponible para gastar: ${formatUSDT(t.remaining)}.` : ' Usado por completo.'
+        const next = tranches[pos + 1]
+        const usedPct = t.amount > 0 ? (used / t.amount) * 100 : 0
         return {
           state: t.state,
-          title: `${prefix}factura enviada`,
+          title: `${prefix}entregado`,
           amount: t.amount,
-          description: inv ? `${inv.concept} · Factura ${inv.number} · RIF verificado.` : 'Factura sellada · RIF verificado.',
-          // The on-chain release tx is what the donor can verify; fall back to the invoice hash for legacy rows.
-          hash: t.tx_hash ? { prefix: 'tx', value: t.tx_hash } : inv?.file_hash ? { prefix: 'hash', value: inv.file_hash } : undefined,
+          description: origin + balance,
+          date: t.released_at ? formatDate(t.released_at) : undefined,
+          hash: t.tx_hash ?? undefined,
+          uses,
+          progress:
+            next && next.state !== 'released' && next.state !== 'broken'
+              ? {
+                  usedPct,
+                  thresholdPct: UNLOCK_THRESHOLD_PCT,
+                  caption:
+                    next.state === 'in_review'
+                      ? `Se alcanzó el ${UNLOCK_THRESHOLD_PCT}% usado: el tramo ${next.index} se está desbloqueando.`
+                      : `Usado ${Math.round(usedPct)}%. Al llegar al ${UNLOCK_THRESHOLD_PCT}% se desbloquea el tramo ${next.index}.`,
+                }
+              : undefined,
         }
+      }
       case 'in_review':
-        return { state: t.state, title: `${prefix}en revisión`, amount: t.amount, description: 'El agente auditor está revisando factura y RIF.' }
+        return { state: t.state, title: `${prefix}desbloqueándose`, amount: t.amount, description: 'Se cumplió la condición de uso. La transferencia a la fundación está en proceso.' }
       case 'broken':
         return { state: t.state, title: `${prefix}sello roto`, amount: t.amount, description: 'No se liberó: tu donación fue reembolsada a tu saldo.' }
       case 'in_custody':
-        return { state: t.state, title: `${prefix}en custodia`, amount: t.amount, description: `Se libera cuando el paso ${t.index - 1} se complete.` }
+        return {
+          state: t.state,
+          title: `${prefix}en custodia`,
+          amount: t.amount,
+          description: t.index > 1 ? `Se libera cuando el tramo ${t.index - 1} se use al ${UNLOCK_THRESHOLD_PCT}%.` : 'La entrega inicial está en proceso.',
+        }
     }
   })
 }
 
+/** Verified expenses that were paid with this donation, with the part that came from it. */
 function InvoicesPanel({ donation, invoices, onClose }: { donation: Donation; invoices: Record<string, Invoice>; onClose: () => void }) {
-  const [error, setError] = useState<string | null>(null)
-  const sealed = (donation.tranches ?? [])
-    .map((t) => (t.invoice_id ? invoices[t.invoice_id] : undefined))
-    .filter((i): i is Invoice => !!i && i.status === 'verified')
-
-  const open = async (inv: Invoice) => {
-    const path = inv.file_paths[0] ?? inv.file_path
-    if (!path) {
-      setError('Esta factura no tiene un documento adjunto todavía.')
-      return
-    }
-    try {
-      window.open(await signedInvoiceUrl(path), '_blank', 'noopener,noreferrer')
-      setError(null)
-    } catch {
-      setError('No pudimos abrir el documento. Intenta de nuevo.')
-    }
-  }
+  const [viewing, setViewing] = useState<Invoice | null>(null)
+  const byInvoice = new Map<string, number>()
+  for (const t of tranchesOf(donation)) for (const u of t.uses ?? []) byInvoice.set(u.invoice_id, (byInvoice.get(u.invoice_id) ?? 0) + u.amount)
+  const rows = [...byInvoice.entries()]
+    .map(([id, mine]) => ({ inv: invoices[id], mine }))
+    .filter((r): r is { inv: Invoice; mine: number } => !!r.inv && r.inv.status === 'verified')
 
   return (
-    <Modal title="Facturas selladas" onClose={onClose} maxWidth={560}>
-      {sealed.length === 0 ? (
-        <p style={{ margin: 0, color: '#5A5468' }}>Aún no hay facturas selladas para esta donación.</p>
-      ) : (
-        sealed.map((inv) => (
-          <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '12px 0', borderTop: '1px solid #ECE7F0' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-              <strong style={{ fontSize: '15px' }}>{inv.concept}</strong>
-              <span style={{ ...MONO, fontSize: '12px', color: '#5A5468' }}>
-                {inv.number} · {formatUSDT(inv.amount)}
-              </span>
-              {inv.file_hash && (
-                <a href={explorerTx(inv.file_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, fontSize: '12px', textDecoration: 'none' }}>
-                  hash {shortHash(inv.file_hash)} ↗
-                </a>
-              )}
+    <>
+      <Modal title="Facturas que usaron tu aporte" onClose={onClose} maxWidth={600}>
+        {rows.length === 0 ? (
+          <p style={{ margin: 0, color: '#5A5468' }}>Aún no se usó dinero de esta donación en gastos verificados.</p>
+        ) : (
+          rows.map(({ inv, mine }) => (
+            <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '12px 0', borderTop: '1px solid #ECE7F0' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                <strong style={{ fontSize: '15px' }}>{inv.concept}</strong>
+                <span style={{ ...MONO, fontSize: '12px', color: '#5A5468' }}>
+                  {inv.number} · {inv.supplier_name ?? inv.supplier_rif} · {formatUSDT(inv.amount)}
+                </span>
+                <span style={{ fontSize: '13px' }}>
+                  De tu donación se usaron <strong>{formatUSDT(mine)}</strong>
+                </span>
+                {inv.file_hash && (
+                  <span title="Huella SHA-256 del documento" style={{ ...MONO, fontSize: '12px', color: '#5A5468' }}>
+                    huella {shortHash(inv.file_hash)}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewing(inv)}
+                style={{ minHeight: '36px', padding: '0 12px', borderRadius: '10px', border: '1.5px solid #1B1530', background: '#FFFFFF', color: '#1B1530', fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                Ver documentos
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => void open(inv)}
-              style={{ minHeight: '36px', padding: '0 12px', borderRadius: '10px', border: '1.5px solid #1B1530', background: '#FFFFFF', color: '#1B1530', fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
-            >
-              Ver PDF
-            </button>
-          </div>
-        ))
-      )}
-      {error && (
-        <p role="alert" style={{ margin: 0, fontSize: '14px', color: '#8E1B47', fontWeight: 600 }}>
-          {error}
-        </p>
-      )}
-    </Modal>
+          ))
+        )}
+      </Modal>
+      {viewing && <DocumentViewer invoice={viewing} onClose={() => setViewing(null)} />}
+    </>
   )
 }
 
@@ -134,13 +164,16 @@ export default function MisRastros() {
   const selected = donations.find((d) => d.id === params.get('donacion')) ?? donations[0] ?? null
 
   // Refunded donations no longer count as delivered or in custody: the donor got 100% back.
-  const allTranches = donations.filter((d) => d.status !== 'refunded').flatMap((d) => d.tranches ?? [])
-  const sum = (states: string[]) => allTranches.filter((t) => states.includes(t.state)).reduce((s, t) => s + t.amount, 0)
-  const delivered = sum(['released'])
-  const custody = sum(['in_custody', 'in_review'])
+  const live = donations.filter((d) => d.status !== 'refunded').flatMap(tranchesOf)
+  const sumAmount = (states: string[]) => live.filter((t) => states.includes(t.state)).reduce((s, t) => s + t.amount, 0)
+  const delivered = sumAmount(['released'])
+  const custody = sumAmount(['in_custody', 'in_review'])
+  const used = live.reduce((s, t) => s + usedOf(t), 0)
 
-  const selDelivered = selected ? (selected.tranches ?? []).filter((t) => t.state === 'released').reduce((s, t) => s + t.amount, 0) : 0
-  const selCustody = selected ? (selected.tranches ?? []).filter((t) => t.state === 'in_custody' || t.state === 'in_review').reduce((s, t) => s + t.amount, 0) : 0
+  const selTranches = selected ? tranchesOf(selected) : []
+  const selDelivered = selTranches.filter((t) => t.state === 'released').reduce((s, t) => s + t.amount, 0)
+  const selCustody = selTranches.filter((t) => t.state === 'in_custody' || t.state === 'in_review').reduce((s, t) => s + t.amount, 0)
+  const selUsed = selTranches.reduce((s, t) => s + usedOf(t), 0)
   const refund = selected?.refunds?.[0]
 
   const showSkeleton = authenticated && loading
@@ -155,17 +188,18 @@ export default function MisRastros() {
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: '16px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <h1 style={{ margin: 0, fontSize: '44px', fontWeight: 800, letterSpacing: '-1.5px' }}>Mis rastros</h1>
-              <p style={{ margin: 0, fontSize: '17px', color: '#5A5468' }}>Sigue tu donación hasta el último recibo.</p>
+              <p style={{ margin: 0, fontSize: '17px', color: '#5A5468' }}>Sigue tu donación hasta saber en qué se usó cada parte.</p>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(150px, 1fr))', gap: '12px', alignItems: 'stretch' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(130px, 1fr))', gap: '12px', alignItems: 'stretch' }}>
               <StatCard label="Entregado" value={formatUSDT(delivered)} padding="12px 18px" labelSize={12} valueSize={22} gap="0" />
+              <StatCard label="Ya usado" value={formatUSDT(used)} padding="12px 18px" labelSize={12} valueSize={22} gap="0" />
               <StatCard label="En custodia" value={formatUSDT(custody)} variant="dashed" padding="12px 18px" labelSize={12} valueSize={22} gap="0" />
             </div>
           </div>
 
           {error && !donations.length && (
             <p role="alert" style={{ margin: 0, color: '#8E1B47', fontWeight: 600 }}>
-              No pudimos cargar tus donaciones. Intenta de nuevo en unos segundos.
+              {error}
             </p>
           )}
 
@@ -224,6 +258,7 @@ export default function MisRastros() {
                             <strong style={{ fontSize: '16px' }}>{d.foundation?.name ?? 'Fundación'}</strong>
                             <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(d.total_amount)}</span>
                           </div>
+                          <span style={{ fontSize: '12px', color: '#5A5468' }}>{formatDate(d.created_at)}</span>
                           <span style={{ fontSize: '13px', color: st.color, fontWeight: st.weight }}>{st.text}</span>
                         </button>
                       )
@@ -233,23 +268,27 @@ export default function MisRastros() {
                     <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <span style={{ ...MONO, fontSize: '12px', letterSpacing: '1.2px', color: '#5A5468' }}>
-                          DONASTE A {(selected.foundation?.name ?? 'FUNDACIÓN').toUpperCase()}
+                          DONASTE A {(selected.foundation?.name ?? 'FUNDACIÓN').toUpperCase()} · {formatDate(selected.created_at).toUpperCase()}
                         </span>
                         <span style={{ ...MONO, fontSize: '52px', fontWeight: 600, lineHeight: 1, letterSpacing: '-2px' }}>{formatUSDT(selected.total_amount)}</span>
                       </div>
-                      <span style={{ fontSize: '15px', color: '#5A5468' }}>
+                      <span style={{ fontSize: '15px', color: '#5A5468', textAlign: 'right' }}>
                         <strong style={{ color: '#1B1530' }}>{formatUSDTCompact(selDelivered)}</strong> entregados ·{' '}
+                        <strong style={{ color: '#1B1530' }}>{formatUSDTCompact(selUsed)}</strong> ya usados ·{' '}
                         <strong style={{ color: '#1B1530' }}>{formatUSDTCompact(selCustody)}</strong> en custodia
                       </span>
                     </div>
                     <TramoTimeline steps={buildSteps(selected, invoices)} />
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', paddingTop: '20px', borderTop: '1.5px dashed #DAD4CF' }}>
                       <SecondaryButton onClick={() => setPanelOpen(true)} padding="0 20px">
-                        Ver facturas selladas
+                        Ver facturas de mi aporte
+                      </SecondaryButton>
+                      <SecondaryButton to={`/fundacion/${selected.foundation_id}#rastro`} padding="0 20px">
+                        Ver el rastro público de la fundación
                       </SecondaryButton>
                       {selected.foundation?.contract_address && (
                         <SecondaryButton href={explorerAddress(selected.foundation.contract_address)} padding="0 20px">
-                          Ver contrato en Trush Network ↗
+                          Ver contrato ↗
                         </SecondaryButton>
                       )}
                       {refund && (

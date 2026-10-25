@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { FOUNDATION_COLUMNS } from '../lib/columns'
 import { toFoundation, toStats } from '../lib/normalize'
 import type { Foundation, FoundationStats } from '../types'
 import { useCurrentUser } from './useCurrentUser'
@@ -19,7 +20,7 @@ export function useMyFoundation() {
 
   const load = useCallback(async () => {
     if (!userId) return
-    const f = await supabase.from('foundations').select('*').eq('user_id', userId).maybeSingle()
+    const f = await supabase.from('foundations').select(FOUNDATION_COLUMNS).eq('user_id', userId).maybeSingle()
     if (f.error) {
       setState({ foundation: null, stats: null, loading: false, error: f.error.message })
       return
@@ -28,7 +29,7 @@ export function useMyFoundation() {
       setState({ foundation: null, stats: null, loading: false, error: null })
       return
     }
-    const foundation = toFoundation(f.data as Foundation)
+    const foundation = toFoundation(f.data as unknown as Foundation)
     const s = await supabase.from('foundation_stats').select('*').eq('foundation_id', foundation.id).maybeSingle()
     setState({ foundation, stats: s.data ? toStats(s.data as FoundationStats) : null, loading: false, error: s.error?.message ?? null })
   }, [userId])

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { usePrivy } from '@privy-io/react-auth'
 import AgentChecks from '../components/AgentChecks'
 import AuditorHeader from '../components/AuditorHeader'
 import Modal from '../components/Modal'
 import PageShell, { Notice } from '../components/PageShell'
 import { approveInvoice, reportInvoice } from '../lib/auditor-actions'
+import { documentUrl } from '../lib/api'
 import { formatUSDT, formatUSDTCompact, shortHash } from '../lib/format'
-import { signedInvoiceUrl } from '../lib/storage'
 import { useAuditQueue, type QueueItem } from '../hooks/useAuditQueue'
 
 const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
@@ -23,53 +24,41 @@ function stateOf(item: QueueItem): QueueState {
 const STATE_ORDER: Record<QueueState, number> = { awaiting: 0, problem: 1, analyzing: 2 }
 
 function stateLine(item: QueueItem): { text: string; color: string } {
-  const tramo = item.invoice.tranche_index ? `Tramo ${item.invoice.tranche_index}` : 'Tramo'
   switch (stateOf(item)) {
     case 'awaiting':
-      return { text: `${tramo} · esperando decisión`, color: '#8A5A00' }
+      return { text: 'Esperando decisión', color: '#8A5A00' }
     case 'problem':
       return { text: 'RIF no coincide · problema de datos', color: '#B4235A' }
     case 'analyzing':
-      return { text: `${tramo} · analizando`, color: '#5A5468' }
+      return { text: 'Analizando', color: '#5A5468' }
   }
 }
 
+/** Preview of the first invoice document, through a 60 s signed URL that only an auditor (or the owner) can mint. */
 function Preview({ invoice }: { invoice: QueueItem['invoice'] }) {
-  const path = invoice.file_paths[0] ?? invoice.file_path
+  const { getAccessToken } = usePrivy()
+  const hasDoc = invoice.document_count > 0
   const [url, setUrl] = useState<string | null>(null)
-  const [zoom, setZoom] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setUrl(null)
-    setZoom(false)
-    if (path) {
-      void signedInvoiceUrl(path)
-        .then((u) => !cancelled && setUrl(u))
+    if (hasDoc) {
+      void getAccessToken()
+        .then((token) => documentUrl(invoice.id, 'invoice', 0, token))
+        .then(({ url: u }) => !cancelled && setUrl(u))
         .catch(() => undefined)
     }
     return () => {
       cancelled = true
     }
-  }, [path])
+  }, [invoice.id, hasDoc, getAccessToken])
 
   const box: CSSProperties = { flex: '1 1 200px', minHeight: '260px', border: '1.5px dashed #8A8296', borderRadius: '12px', background: '#F6F4EF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', color: '#5A5468', overflow: 'auto' }
-  if (!path || !url) return <div style={box}>{path ? 'Cargando vista previa…' : 'Vista previa no disponible'}</div>
-  if (/\.pdf$/i.test(path)) {
-    return (
-      <div style={{ ...box, border: '1.5px solid #DAD4CF', padding: 0 }}>
-        <iframe title="Vista previa de la factura" src={url} style={{ width: '100%', height: '100%', minHeight: '260px', border: 'none' }} />
-      </div>
-    )
-  }
+  if (!hasDoc || !url) return <div style={box}>{hasDoc ? 'Cargando vista previa…' : 'Vista previa no disponible'}</div>
   return (
-    <div style={{ ...box, border: '1.5px solid #DAD4CF', alignItems: zoom ? 'flex-start' : 'center' }}>
-      <img
-        src={url}
-        alt="Factura"
-        onClick={() => setZoom((z) => !z)}
-        style={{ width: zoom ? '200%' : '100%', maxWidth: zoom ? 'none' : '100%', cursor: zoom ? 'zoom-out' : 'zoom-in' }}
-      />
+    <div style={{ ...box, border: '1.5px solid #DAD4CF', padding: 0 }}>
+      <iframe title="Vista previa de la factura" src={url} style={{ width: '100%', height: '100%', minHeight: '260px', border: 'none' }} />
     </div>
   )
 }
@@ -202,7 +191,6 @@ export default function ConsolaAuditor() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ ...MONO, fontSize: '12px', letterSpacing: '1.2px', color: '#5A5468' }}>
                     {selected.foundationName.toUpperCase()}
-                    {selected.invoice.tranche_index ? ` · TRAMO ${selected.invoice.tranche_index}` : ''}
                   </span>
                   <span style={{ fontSize: '26px', fontWeight: 800, letterSpacing: '-0.5px' }}>
                     Factura {selected.invoice.number} · {selected.invoice.concept}

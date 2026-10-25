@@ -1,18 +1,21 @@
 import { useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { usePrivy } from '@privy-io/react-auth'
 import DocumentViewer from '../components/DocumentViewer'
 import FoundationHeader from '../components/FoundationHeader'
+import EvidenceDeadline from '../components/EvidenceDeadline'
 import InvoiceReportModal from '../components/InvoiceReportModal'
+import RetryEvidenceModal from '../components/RetryEvidenceModal'
 import PageShell, { Notice } from '../components/PageShell'
 import StatCard from '../components/StatCard'
 import StatusBadge from '../components/StatusBadge'
-import { useFoundationInvoices } from '../hooks/useFoundationInvoices'
+import { useOwnInvoices } from '../hooks/useOwnerData'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useMyFoundation } from '../hooks/useMyFoundation'
 import { formatDate, formatTokens, formatUSDT, shortHash } from '../lib/format'
 import { hasFailedCheck } from '../lib/normalize'
 import { openInvoiceDocument } from '../lib/storage'
-import type { Invoice, InvoiceStatus } from '../types'
+import type { Invoice, InvoiceStatus, OwnInvoice } from '../types'
 
 const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
 const PAGE_SIZE = 20
@@ -26,26 +29,48 @@ const FILTERS: { label: string; param: string | null; status: InvoiceStatus | nu
 
 type SortKey = 'date' | 'amount'
 
-/** Note under the concept: tranche + short hash when verified, reason when rejected, agent progress otherwise. */
+/** Note under the concept: what the spend was attributed to when verified, the reason when rejected, agent progress otherwise. */
 function noteFor(i: Invoice): string {
-  const tramo = i.tranche_index ? `Tramo ${i.tranche_index}` : 'Tramo'
-  if (i.status === 'verified') return `${tramo}${i.release_tx_hash ? ` · tx ${shortHash(i.release_tx_hash)}` : i.file_hash ? ` · hash ${shortHash(i.file_hash)}` : ''}`
+  if (i.status === 'verified') {
+    const covered = i.allocated_amount ? `${formatUSDT(i.allocated_amount)} asignados a aportes` : 'Gasto verificado'
+    return `${covered}${i.release_tx_hash ? ` · desbloqueo tx ${shortHash(i.release_tx_hash)}` : ''}`
+  }
   if (i.status === 'rejected') return i.review_note ?? 'Factura rechazada'
-  return hasFailedCheck(i) ? `${tramo} · revisión humana sugerida` : `${tramo} · agente revisando RIF`
+  if (i.suspicious_at) return 'Sin respaldo dentro del plazo de 7 días'
+  if ((i.attempts ?? 0) > 0) return `${i.review_note ?? 'Faltan verificaciones'} · intento ${i.attempts}`
+  return hasFailedCheck(i) ? 'Revisión humana sugerida' : 'Falta enviar la verificación del gasto'
 }
 
-/** Pending invoice flagged by the agent but without a human decision yet. */
-const badgeStatus = (i: Invoice) => (i.status === 'in_review' && hasFailedCheck(i) ? ('suspicious' as const) : i.status)
+/** Open spend past its deadline, or flagged by the agent without a human decision yet. */
+const badgeStatus = (i: Invoice) => (i.status === 'in_review' && (i.suspicious_at || hasFailedCheck(i)) ? ('suspicious' as const) : i.status)
+
+/** Button that opens the retry modal for an open spend. */
+function RetryButton({ invoice, onOpen, fullWidth }: { invoice: OwnInvoice; onOpen: () => void; fullWidth?: boolean }) {
+  if (invoice.status !== 'in_review') return null
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen()
+      }}
+      style={{ minHeight: '36px', padding: '0 12px', width: fullWidth ? '100%' : undefined, borderRadius: '10px', border: 'none', background: '#B4235A', color: '#FFFFFF', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}
+    >
+      Respaldar gasto
+    </button>
+  )
+}
 
 function DocButton({ invoice, onMany, fullWidth }: { invoice: Invoice; onMany: () => void; fullWidth?: boolean }) {
+  const { getAccessToken } = usePrivy()
   const [error, setError] = useState(false)
-  const count = invoice.file_paths.length || (invoice.file_path ? 1 : 0)
+  const count = invoice.document_count
   const disabled = count === 0
   const click = async () => {
     if (count > 1) return onMany()
     try {
       setError(false)
-      await openInvoiceDocument(invoice.file_paths[0] ?? invoice.file_path ?? '')
+      await openInvoiceDocument(invoice.id, 0, getAccessToken)
     } catch {
       setError(true)
     }
@@ -96,8 +121,9 @@ function DocButton({ invoice, onMany, fullWidth }: { invoice: Invoice; onMany: (
 }
 
 export default function Facturas() {
-  const { foundation, loading: loadingF } = useMyFoundation()
-  const { invoices, loading, error } = useFoundationInvoices(foundation?.id)
+  const { foundation, stats, loading: loadingF } = useMyFoundation()
+  const { invoices, maxAttempts, loading, error, reload } = useOwnInvoices(!!foundation)
+  const [retry, setRetry] = useState<OwnInvoice | null>(null)
   const [params, setParams] = useSearchParams()
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'date', dir: 'desc' })
   const [limit, setLimit] = useState(PAGE_SIZE)
@@ -174,7 +200,7 @@ export default function Facturas() {
 
   return (
     <PageShell minHeight={1000}>
-      <FoundationHeader active="facturas" level={foundation.level} reputation={foundation.reputation_score} />
+      <FoundationHeader active="facturas" level={foundation.level} reputation={foundation.reputation_score} reputationState={stats?.reputation_state} />
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '32px 24px 64px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: '16px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -254,6 +280,8 @@ export default function Facturas() {
                   </div>
                   <span style={{ fontSize: '13px', color: '#5A5468' }}>{formatDate(i.uploaded_at)}</span>
                 </div>
+                {i.status === 'in_review' && <EvidenceDeadline dueAt={i.evidence_due_at} suspicious={i.suspicious_at} />}
+                <RetryButton invoice={i} onOpen={() => setRetry(i)} fullWidth />
                 <DocButton invoice={i} onMany={() => setViewer(i)} fullWidth />
               </div>
             ))}
@@ -284,6 +312,7 @@ export default function Facturas() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                         <span style={{ fontWeight: 600 }}>{i.concept}</span>
                         <span style={{ fontSize: '12px', color: '#5A5468' }}>{noteFor(i)}</span>
+                        {i.status === 'in_review' && <EvidenceDeadline dueAt={i.evidence_due_at} suspicious={i.suspicious_at} />}
                       </div>
                     </td>
                     <td style={{ padding: '16px 18px', whiteSpace: 'nowrap' }}>
@@ -297,7 +326,10 @@ export default function Facturas() {
                       <StatusBadge status={badgeStatus(i)} />
                     </td>
                     <td style={{ padding: '16px 18px' }}>
-                      <DocButton invoice={i} onMany={() => setViewer(i)} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+                        <RetryButton invoice={i} onOpen={() => setRetry(i)} />
+                        <DocButton invoice={i} onMany={() => setViewer(i)} />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -317,10 +349,13 @@ export default function Facturas() {
           </button>
         )}
 
-        <p style={{ margin: 0, fontSize: '13px', color: '#5A5468' }}>Una factura rechazada congela la fundación y devuelve la custodia a los donantes.</p>
+        <p style={{ margin: 0, fontSize: '13px', color: '#5A5468' }}>
+          Un gasto puede estar abierto hasta 7 días y tener {maxAttempts} verificaciones. Sin respaldo a tiempo se vuelve sospechoso y baja el nivel a 1. Una factura rechazada congela la fundación y devuelve la custodia a los donantes.
+        </p>
       </div>
       {report && <InvoiceReportModal invoice={report} onClose={() => setReport(null)} />}
       {viewer && <DocumentViewer invoice={viewer} onClose={() => setViewer(null)} />}
+      {retry && <RetryEvidenceModal key={retry.id} invoice={retry} maxAttempts={maxAttempts} onClose={() => setRetry(null)} onDone={() => void reload()} />}
     </PageShell>
   )
 }

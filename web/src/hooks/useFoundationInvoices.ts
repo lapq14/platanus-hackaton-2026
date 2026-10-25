@@ -3,10 +3,12 @@ import { supabase } from '../lib/supabase'
 import { toInvoice } from '../lib/normalize'
 import type { Invoice } from '../types'
 
+const POLL_MS = 15_000
+
 /**
- * All invoices of a foundation, newest first, kept fresh with Supabase Realtime
- * (the `invoices` table is in the realtime publication and readable with the anon key).
- * The foundation volume is small; filtering, sorting and "Cargar más" run on the client.
+ * All invoices of a foundation, newest first, read from the public `invoices_public` view
+ * (no document paths) and refreshed by polling. The foundation volume is small; filtering, sorting and
+ * "Cargar más" run on the client.
  */
 export function useFoundationInvoices(foundationId: string | undefined) {
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -16,7 +18,7 @@ export function useFoundationInvoices(foundationId: string | undefined) {
   const load = useCallback(async () => {
     if (!foundationId) return
     const { data, error: err } = await supabase
-      .from('invoices')
+      .from('invoices_public')
       .select('*')
       .eq('foundation_id', foundationId)
       .order('uploaded_at', { ascending: false })
@@ -31,13 +33,10 @@ export function useFoundationInvoices(foundationId: string | undefined) {
   useEffect(() => {
     if (!foundationId) return
     void load()
-    const channel = supabase
-      .channel(`invoices:${foundationId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices', filter: `foundation_id=eq.${foundationId}` }, () => void load())
-      .subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void load()
+    }, POLL_MS)
+    return () => clearInterval(t)
   }, [foundationId, load])
 
   return { invoices, loading, error, reload: load }

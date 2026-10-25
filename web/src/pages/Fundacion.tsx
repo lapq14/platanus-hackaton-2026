@@ -3,14 +3,18 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { usePrivy } from '@privy-io/react-auth'
 import DonorHeader from '../components/DonorHeader'
 import PageShell, { Notice } from '../components/PageShell'
+import FundTrace from '../components/FundTrace'
+import ReputationChip from '../components/ReputationChip'
 import StatCard from '../components/StatCard'
 import TopUpModal from '../components/TopUpModal'
+import TrustAlerts from '../components/TrustAlerts'
 import { InstagramIcon, TikTokIcon, XIcon } from '../components/icons/Social'
-import { LEVEL_RELEASE, LEVEL_ROMAN, toLevel } from '../config/levels'
+import { LEVEL_RELEASE, LEVEL_TRANCHES, UNLOCK_THRESHOLD_PCT, toLevel } from '../config/levels'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import { useFoundationDetail } from '../hooks/useFoundationDetail'
+import { useFoundationTrace } from '../hooks/useFoundationTrace'
 import { ApiError, donate as requestDonation } from '../lib/api'
-import { explorerAddress, explorerTx } from '../lib/chain'
+import { explorerAddress } from '../lib/chain'
 import { formatUSDT, shortHash } from '../lib/format'
 import type { Foundation } from '../types'
 
@@ -58,7 +62,9 @@ export default function Fundacion() {
   const location = useLocation()
   const { login, authenticated, getAccessToken } = usePrivy()
   const { dbUser, balance, setBalance } = useCurrentUser()
-  const { foundation, stats, invoices, loading, error } = useFoundationDetail(id)
+  const { foundation, stats, loading, error } = useFoundationDetail(id)
+  // One request feeds both the alerts and the public trace section.
+  const traceState = useFoundationTrace(id)
 
   const [amount, setAmount] = useState(50)
   const [custom, setCustom] = useState(false)
@@ -113,6 +119,8 @@ export default function Fundacion() {
 
   const level = toLevel(foundation.level)
   const pct = LEVEL_RELEASE[level]
+  const trancheCount = LEVEL_TRANCHES[level]
+  const noHistory = stats?.reputation_state === 'sin_historial'
   const receiving = foundation.status === 'active'
   const today = Math.round(amount * pct) / 100
   const rest = Math.round((amount - today) * 100) / 100
@@ -195,48 +203,25 @@ export default function Fundacion() {
               )}
               <SocialRow f={foundation} />
             </div>
+            {stats && <TrustAlerts foundation={foundation} stats={stats} invoices={traceState.trace?.invoices} />}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-              <StatCard label="Reputación" value={`${foundation.reputation_score}%`} valueSize={26} padding="16px" />
-              <StatCard label="Nivel" value={LEVEL_ROMAN[level]} valueSize={26} padding="16px" />
+              {noHistory ? (
+                <StatCard label="Reputación" padding="16px" gap="8px">
+                  <ReputationChip state="sin_historial" size="md" style={{ alignSelf: 'flex-start' }} />
+                  <span style={{ fontSize: '12px', color: '#5A5468', lineHeight: 1.4 }}>Aún no participa en recaudaciones. No hay información, no es una mala señal.</span>
+                </StatCard>
+              ) : (
+                <StatCard label="Reputación" padding="16px" gap="8px">
+                  <span style={{ ...MONO, fontSize: '26px', fontWeight: 600 }}>{foundation.reputation_score}%</span>
+                  {stats && <ReputationChip state={stats.reputation_state} style={{ alignSelf: 'flex-start' }} />}
+                </StatCard>
+              )}
+              <StatCard label="Nivel" value={level} valueSize={26} padding="16px" />
               <StatCard label="Facturas completadas" value={stats?.sealed_invoices_count ?? 0} valueSize={26} padding="16px" />
               {/* "Facturas con detalles" = verified invoices whose agent_checks include a failed check (human review suggested). */}
               <StatCard label="Facturas con detalles" value={stats?.flagged_invoices_count ?? 0} valueSize={26} padding="16px" />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700 }}>Últimas facturas selladas</h2>
-              <div style={{ background: '#FFFFFF', border: '1.5px solid #DAD4CF', borderRadius: '14px', overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', minWidth: '560px' }}>
-                  <thead>
-                    <tr style={{ textAlign: 'left', color: '#5A5468', fontSize: '12px' }}>
-                      {['CONCEPTO', 'PROVEEDOR (RIF)', 'MONTO', 'HASH'].map((h) => (
-                        <th key={h} style={{ padding: '12px 16px', fontWeight: 600 }}>
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {invoices.map((inv) => (
-                      <tr key={inv.id} style={{ borderTop: '1px solid #ECE7F0' }}>
-                        <td style={{ padding: '12px 16px', fontWeight: 600 }}>{inv.concept}</td>
-                        <td style={{ padding: '12px 16px', ...MONO, fontSize: '13px' }}>{inv.supplier_rif}</td>
-                        <td style={{ padding: '12px 16px', ...MONO }}>{formatUSDT(inv.amount)}</td>
-                        <td style={{ padding: '12px 16px' }}>
-                          {inv.file_hash && (
-                            <a href={explorerTx(inv.file_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, fontSize: '13px', textDecoration: 'none' }}>
-                              {shortHash(inv.file_hash)} ↗
-                            </a>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {invoices.length === 0 && (
-                  <p style={{ margin: 0, padding: '24px 16px', textAlign: 'center', color: '#5A5468' }}>Aún no hay facturas selladas.</p>
-                )}
-              </div>
-            </div>
+            <FundTrace state={traceState} />
           </div>
 
           <aside style={{ flex: '1 1 360px', background: '#FFFFFF', border: '1.5px solid #1B1530', borderRadius: '20px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -285,14 +270,14 @@ export default function Fundacion() {
                   <span style={{ ...MONO, fontSize: '12px', letterSpacing: '1.2px', color: '#5A5468' }}>ASÍ SE MOVERÁN TUS ${amountValid ? amount : 0}</span>
                   <div style={{ display: 'flex', height: '44px', border: '1.5px solid #1B1530', borderRadius: '10px', overflow: 'hidden', ...MONO, fontSize: '12px' }}>
                     <div style={{ flex: pct, background: '#1A7F52', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600 }}>{pct}%</div>
-                    {[2, 3, 4].map((n) => (
-                      <div key={n} style={{ flex: (100 - pct) / 3, display: 'flex', alignItems: 'center', justifyContent: 'center', borderLeft: '1.5px dashed #8A8296' }}>
-                        Cuota {n}
+                    {Array.from({ length: trancheCount - 1 }, (_, k) => k + 2).map((n) => (
+                      <div key={n} style={{ flex: (100 - pct) / (trancheCount - 1), display: 'flex', alignItems: 'center', justifyContent: 'center', borderLeft: '1.5px dashed #8A8296' }}>
+                        Tramo {n}
                       </div>
                     ))}
                   </div>
                   <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5, color: '#5A5468' }}>
-                    <strong style={{ color: '#1B1530' }}>{today.toFixed(2)} USDT llega hoy.</strong> El resto ({rest.toFixed(2)} USDT) queda en custodia y se libera solo cuando la fundación confirme cada gasto con factura y RIF del proveedor.
+                    <strong style={{ color: '#1B1530' }}>{today.toFixed(2)} USDT llega hoy.</strong> El resto ({rest.toFixed(2)} USDT) queda en custodia en {trancheCount - 1} {trancheCount - 1 === 1 ? 'tramo' : 'tramos'}. Cada tramo se libera cuando la fundación demuestra, con facturas verificadas, que ya usó al menos el {UNLOCK_THRESHOLD_PCT}% del tramo anterior.
                   </p>
                 </div>
                 {insufficient && (

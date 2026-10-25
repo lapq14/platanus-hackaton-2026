@@ -1,4 +1,4 @@
-// Utilidades compartidas por las Edge Functions de Trazo.
+// Utilidades compartidas por las Edge Functions de Rastro.
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { createPublicClient, createWalletClient, defineChain, http } from 'npm:viem@2'
 import { privateKeyToAccount } from 'npm:viem@2/accounts'
@@ -28,7 +28,7 @@ export const admin = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROL
 
 export const chain = defineChain({
   id: Number(Deno.env.get('CHAIN_ID') ?? 84532),
-  name: 'Trazo chain',
+  name: 'Rastro chain',
   nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
   rpcUrls: { default: { http: [Deno.env.get('CHAIN_RPC') ?? 'https://sepolia.base.org'] } },
 })
@@ -114,6 +114,8 @@ const DB_ERRORS: Record<string, [number, string, string]> = {
   invoice_not_found: [404, 'invoice_not_found', 'Factura no encontrada'],
   invoice_not_pending: [409, 'invoice_not_pending', 'La factura ya fue resuelta'],
   donation_refunded: [409, 'donation_refunded', 'La donación ya fue reembolsada'],
+  insufficient_balance: [409, 'insufficient_balance', 'El gasto supera el saldo disponible de la fundación'],
+  already_allocated: [409, 'already_allocated', 'Este gasto ya fue asignado a los aportes'],
   invalid_verdict: [500, 'internal_error', 'Error interno del servidor'],
 }
 
@@ -197,6 +199,21 @@ export async function requireUser(req: Request): Promise<UserRow> {
   if (!data) throw new HttpError(404, 'user_not_synced', 'Usuario no sincronizado')
   return data as UserRow
 }
+
+/** Like requireUser, but anonymous callers (no or invalid token) get `null` instead of an error. */
+export async function optionalUser(req: Request): Promise<UserRow | null> {
+  if (!(req.headers.get('Authorization') ?? '').startsWith('Bearer ')) return null
+  try {
+    return await requireUser(req)
+  } catch (e) {
+    if (e instanceof HttpError && (e.status === 401 || e.status === 404)) return null
+    throw e
+  }
+}
+
+/** Foundation columns safe to show to anyone (never official_email nor the legal documents). */
+export const PUBLIC_FOUNDATION_COLUMNS =
+  'id, user_id, name, description, category, logo_url, wallet_address, reputation_score, payout_percentage, status, total_received, created_at, rif, country, city, level, instagram_url, tiktok_url, x_url, contract_address'
 
 /** Parses and validates an amount: finite number, > 0, <= MAX_USD, rounded to 2 decimals. */
 export function parseAmount(value: unknown): number {
@@ -346,8 +363,10 @@ export interface SpendReleaseResult {
 const sumCents = (rows: { amount: number | string }[]) => rows.reduce((s, r) => s + Math.round(Number(r.amount) * 100), 0)
 
 /**
- * Releases the tranches linked to a VERIFIED invoice (submit_spend_for_review froze that set as `in_review`)
- * with ONE transfer from custody to the foundation wallet. Same pattern as releaseInitial:
+ * Sends the tranches a VERIFIED invoice unlocked (allocate_spend marked the next tranche of every donation whose
+ * tranche reached 50% consumed as `in_review`, with invoice_id = this invoice) with ONE transfer from custody to
+ * the foundation wallet. If no tranche reached the threshold there is nothing to send (`status: 'none'`).
+ * Same pattern as releaseInitial:
  * claim -> send -> persist hash -> best-effort receipt -> finalize (record_spend_release).
  * Every step is retryable: a retry after a persisted hash only finalizes; it never sends again.
  * A send failure (e.g. escrow without ETH) leaves invoice = verified and tranches = in_review: call again later.

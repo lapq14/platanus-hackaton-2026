@@ -349,7 +349,7 @@ export default function Registro() {
           <span style={{ ...MONO, fontSize: '12px', letterSpacing: '1.5px', color: '#5A5468' }}>REGISTRO DE FUNDACIÓN</span>
           <h1 style={{ margin: 0, fontSize: 'clamp(34px, 4vw, 52px)', lineHeight: 0.95, fontWeight: 800, letterSpacing: '-2px' }}>Haz que cada aporte deje rastro.</h1>
           <p style={{ margin: 0, fontSize: '17px', lineHeight: 1.5, color: '#5A5468' }}>
-            Empiezas en Nivel I: recibes el {LEVEL_RELEASE[1]}% de cada donación al instante y el resto se libera con cada factura sellada.
+            Empiezas en Nivel 1, sin historial: recibes el {LEVEL_RELEASE[1]}% de cada donación al instante y el resto se libera por tramos cuando demuestras, con facturas verificadas, que usaste al menos la mitad del tramo anterior.
           </p>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '28px', alignItems: 'flex-start' }}>

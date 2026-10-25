@@ -4,7 +4,7 @@ import DonorHeader from '../components/DonorHeader'
 import PageShell from '../components/PageShell'
 import { PrimaryButton, SecondaryButton } from '../components/Buttons'
 import TramoIcon from '../components/TramoIcon'
-import { LEVEL_RELEASE, LEVEL_ROMAN, splitDonation } from '../config/levels'
+import { LEVEL_RELEASE, splitDonation } from '../config/levels'
 import { formatUSDT } from '../lib/format'
 
 const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
@@ -14,7 +14,7 @@ const EXAMPLE_LEVEL = 3 as const
 /** Illustrative "how a $50 donation travels" card. Amounts come from LEVEL_RELEASE so they always match the real rule. */
 function TravelCard() {
   const pct = LEVEL_RELEASE[EXAMPLE_LEVEL]
-  const amounts = splitDonation(EXAMPLE_AMOUNT, pct)
+  const amounts = splitDonation(EXAMPLE_AMOUNT, EXAMPLE_LEVEL)
   const cols: { label: string; ref?: string }[] = [
     { label: 'Liberado al donar', ref: 'tx 0x7a3f…' },
     { label: 'Factura sellada', ref: 'hash 0x2d08…' },
@@ -26,7 +26,7 @@ function TravelCard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '8px' }}>
         <span style={{ fontSize: '17px', fontWeight: 700 }}>Así viaja un aporte de ${EXAMPLE_AMOUNT}</span>
         <span style={{ ...MONO, fontSize: '12px', color: '#5A5468' }}>
-          NIVEL {LEVEL_ROMAN[EXAMPLE_LEVEL]} · {pct}% INICIAL
+          NIVEL {EXAMPLE_LEVEL} · {pct}% INICIAL
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -76,7 +76,7 @@ export default function Explorar() {
         </div>
         <TravelCard />
       </section>
-      <CatalogSection variant="explorar" />
+      <CatalogSection />
     </PageShell>
   )
 }

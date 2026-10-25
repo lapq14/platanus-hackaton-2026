@@ -4,10 +4,13 @@ import RoleGuard from './components/RoleGuard'
 import ConsolaAuditor from './pages/ConsolaAuditor'
 import Explorar from './pages/Explorar'
 import Facturas from './pages/Facturas'
+import FondosFundacion from './pages/FondosFundacion'
 import Fundacion from './pages/Fundacion'
 import Home from './pages/Home'
 import MisRastros from './pages/MisRastros'
 import PanelFundacion from './pages/PanelFundacion'
+import PerfilFundacion from './pages/PerfilFundacion'
+import Reclamar from './pages/Reclamar'
 import Reembolso from './pages/Reembolso'
 import Registro from './pages/Registro'
 
@@ -61,6 +64,22 @@ export default function App() {
           }
         />
         <Route
+          path="/panel/fondos"
+          element={
+            <RoleGuard role="ong">
+              <FondosFundacion />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/panel/perfil"
+          element={
+            <RoleGuard role="ong">
+              <PerfilFundacion />
+            </RoleGuard>
+          }
+        />
+        <Route
           path="/auditor"
           element={
             <RoleGuard role="auditor">
@@ -69,6 +88,7 @@ export default function App() {
           }
         />
         <Route path="/registro" element={<Registro />} />
+        <Route path="/reclamar" element={<Reclamar />} />
         <Route path="*" element={<Home />} />
       </Routes>
     </>

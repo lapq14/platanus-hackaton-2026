@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { documentUrl } from './api'
 
 export const BUCKETS = {
   logos: 'foundation-logos',
@@ -18,21 +19,29 @@ export function publicLogoUrl(path: string): string {
   return supabase.storage.from(BUCKETS.logos).getPublicUrl(path).data.publicUrl
 }
 
-/** Signed URL for a private invoice file; expires in 60 seconds. */
-export async function signedInvoiceUrl(path: string): Promise<string> {
-  const { data, error } = await supabase.storage.from(BUCKETS.invoices).createSignedUrl(path, 60)
-  if (error || !data) throw new Error(error?.message ?? 'No se pudo generar el enlace')
-  return data.signedUrl
-}
-
 export const fileExtension = (file: File): string => {
   const fromName = file.name.split('.').pop()?.toLowerCase()
   if (fromName && /^[a-z0-9]{2,4}$/.test(fromName)) return fromName
   return file.type === 'application/pdf' ? 'pdf' : file.type === 'image/png' ? 'png' : 'jpg'
 }
 
-/** Opens an invoice document through a 60 s signed URL (new tab). */
-export async function openInvoiceDocument(path: string): Promise<void> {
-  const url = await signedInvoiceUrl(path)
-  window.open(url, '_blank', 'noopener,noreferrer')
+/** Returns an access token when the user is signed in, or null (public documents need none). */
+export type TokenGetter = () => Promise<string | null>
+
+/**
+ * Opens an invoice document in a new tab. The tab is opened synchronously (inside the click) and pointed at the
+ * signed URL afterwards, so Safari and mobile browsers do not block it as a popup.
+ */
+export async function openInvoiceDocument(invoiceId: string, index = 0, getToken?: TokenGetter): Promise<void> {
+  const tab = window.open('', '_blank')
+  if (tab) tab.opener = null
+  try {
+    const token = getToken ? await getToken() : null
+    const { url } = await documentUrl(invoiceId, 'invoice', index, token)
+    if (tab) tab.location.href = url
+    else window.location.href = url
+  } catch (e) {
+    tab?.close()
+    throw e
+  }
 }
