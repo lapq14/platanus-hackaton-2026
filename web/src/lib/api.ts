@@ -77,7 +77,8 @@ export const documentUrl = (invoiceId: string, kind: 'invoice' | 'origin' | 'des
   callFn<{ url: string }>('document-url', token, { invoice_id: invoiceId, kind, index })
 
 export interface ReportSpendInput {
-  concept: string
+  /** 3 to 80 characters. Omit it and the verification agent extracts it from the invoice. */
+  concept?: string
   amount: number
   supplier_rif: string
   file_paths: string[]
@@ -136,11 +137,24 @@ export type SpendReleaseInfo =
   | { status: 'none'; released_count: 0; released_usd: 0 }
   | { status: 'pending'; error: string; message: string }
 
+/** Facts the agent read from the invoice files (empty strings / 0 when it could not read them). */
+export interface ExtractedInvoice {
+  number: string
+  issue_date: string
+  supplier_name: string
+  supplier_rif: string
+  total_usd: number
+  concept: string
+  items_summary: string
+}
+
 export interface VerifySpendResult {
   /** `needs_changes`: a check failed but attempts are left; the spend stays open so the documents can be corrected. */
   status: 'verified' | 'rejected' | 'needs_changes'
   checks: AgentCheck[]
   review_note: string
+  /** Absent only on the release-only retry of an already verified spend (no model call). */
+  invoice?: ExtractedInvoice
   /** Present when status = 'verified'. */
   release?: SpendReleaseInfo
   /** Present when status = 'verified': the part of the spend attributed to donor contributions. */
@@ -163,7 +177,7 @@ export interface VerifySpendInput {
   file_hashes?: string[]
 }
 
-/** Runs the AI + registry verification of the two spend documents (origin proof, destination business doc). */
+/** Runs the AI + registry verification of the spend documents (origin proof, destination business doc, invoice files). */
 export const verifySpend = (token: string, input: VerifySpendInput) => callFn<VerifySpendResult>('verify-spend', token, input)
 
 // ---- Foundation owner tools ----------------------------------------------------------------------------------

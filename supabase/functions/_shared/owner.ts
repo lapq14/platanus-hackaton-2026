@@ -7,6 +7,12 @@ import { admin, dbError, HttpError, requireUser, type UserRow } from './core.ts'
  */
 export const MAX_SPEND_ATTEMPTS = 3
 
+/**
+ * Concept stored by report-spend when the foundation leaves it empty; verify-spend replaces it with the concept
+ * it extracts from the invoice. Must satisfy the invoices.concept check (3 to 80 characters).
+ */
+export const CONCEPT_PENDING = 'Por extraer de la factura'
+
 /** The caller must be a signed-in `ong` that owns a foundation. `columns` is the PostgREST select list. */
 export async function requireOwner<T = Record<string, unknown>>(
   req: Request,
