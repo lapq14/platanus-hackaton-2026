@@ -7,7 +7,7 @@ import { formatUSDT } from '../lib/format'
 import Logo from './Logo'
 import TopUpModal from './TopUpModal'
 
-type Active = 'explorar' | 'mis-rastros' | 'home'
+type Active = 'explorar' | 'mis-rastros' | 'como-funciona' | 'home'
 
 const LINK: CSSProperties = { padding: '10px 16px', borderRadius: '999px', color: '#1B1530', textDecoration: 'none', fontSize: '15px' }
 const LINK_ACTIVE: CSSProperties = { ...LINK, background: '#1B1530', color: '#F6F4EF', fontWeight: 600 }
@@ -67,9 +67,9 @@ export function DonorHeaderView({ active, balance, initial, foundationHref, onLo
           <Link to="/mis-rastros" style={active === 'mis-rastros' ? LINK_ACTIVE : LINK}>
             Mis rastros
           </Link>
-          <a href="#" style={LINK}>
+          <Link to="/como-funciona" style={active === 'como-funciona' ? LINK_ACTIVE : LINK}>
             Cómo funciona
-          </a>
+          </Link>
           <Link to={foundationHref} style={LINK}>
             Soy fundación
           </Link>

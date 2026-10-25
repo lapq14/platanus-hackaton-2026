@@ -53,7 +53,7 @@ export default function CatalogSection() {
   return (
     <section
       id="fundaciones"
-      style={{ maxWidth: '1200px', margin: '0 auto', padding: '8px 24px 64px', display: 'flex', flexDirection: 'column', gap: '22px' }}
+      style={{ maxWidth: '1200px', margin: '0 auto', padding: '56px 24px 64px', display: 'flex', flexDirection: 'column', gap: '22px' }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
         <h2 style={{ margin: 0, fontSize: '32px', fontWeight: 800, letterSpacing: '-1px' }}>¿A quién le sigues el rastro hoy?</h2>
