@@ -131,7 +131,12 @@ function SealForm({ foundation, available, disabled, onSent }: SealFormProps) {
           .number({ error: 'Ingresa un monto válido.' })
           .positive('El monto debe ser mayor a 0.')
           .max(available, `Tu saldo disponible es ${formatUSDT(available)}. Un gasto no puede superarlo.`),
-        concept: z.string().trim().min(3, 'Entre 3 y 80 caracteres.').max(80, 'Entre 3 y 80 caracteres.'),
+        // Optional: when left empty the agent extracts it from the invoice.
+        concept: z
+          .string()
+          .trim()
+          .max(80, 'Entre 3 y 80 caracteres.')
+          .refine((v) => v.length === 0 || v.length >= 3, 'Entre 3 y 80 caracteres.'),
       }),
     [available],
   )
@@ -222,8 +227,9 @@ function SealForm({ foundation, available, disabled, onSent }: SealFormProps) {
       const originPath = await uploadViaServer('spend_origin', originFile, token)
       const destPath = await uploadViaServer('spend_destination', destFile, token)
       // The server creates the invoice (the 7-day window starts) and rejects a spend above the available balance.
+      const concept = values.concept.trim()
       const { invoice: created } = await reportSpend(await freshToken(), {
-        concept: values.concept.trim(),
+        ...(concept ? { concept } : {}),
         amount: values.amount,
         supplier_rif: values.rif.trim().toUpperCase(),
         file_paths: paths,
@@ -307,9 +313,9 @@ function SealForm({ foundation, available, disabled, onSent }: SealFormProps) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
               <label htmlFor="concepto" style={LABEL}>
-                Concepto
+                Concepto (opcional)
               </label>
-              <input id="concepto" placeholder="Medicinas" {...register('concept')} style={{ ...INPUT, fontFamily: 'inherit' }} />
+              <input id="concepto" placeholder="Lo extrae el agente de la factura" {...register('concept')} style={{ ...INPUT, fontFamily: 'inherit' }} />
               {errors.concept && <span style={FIELD_ERROR}>{errors.concept.message}</span>}
             </div>
           </div>

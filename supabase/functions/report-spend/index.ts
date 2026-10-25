@@ -1,13 +1,15 @@
 // A foundation reports a spend (invoice). The amount is validated against the foundation's available balance
 // (released and unspent tranches, minus what other submitted invoices reserve).
-// POST { concept, amount, supplier_rif, file_paths[], file_hash?, file_hashes? } -> { invoice }
+// POST { concept?, amount, supplier_rif, file_paths[], file_hash?, file_hashes? } -> { invoice }
+//   concept     optional, 3 to 80 characters when given; when empty the placeholder CONCEPT_PENDING is stored and
+//               verify-spend fills it with the concept it extracts from the invoice.
 //   file_paths  1 to 5 files uploaded through upload-url with kind 'invoice'. Any other path is rejected.
 // The invoice is created `in_review` with a 7-day evidence window (evidence_due_at); verify-spend then submits and
 // verifies it. If it stays open without backing past that window it becomes suspicious and the foundation's
 // reputation drops to level 1.
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { admin, CORS, dbError, fail, HttpError, json, readBody, round2 } from '../_shared/core.ts'
-import { requireOwner } from '../_shared/owner.ts'
+import { CONCEPT_PENDING, requireOwner } from '../_shared/owner.ts'
 import { claimUploads, ownPath } from '../_shared/uploads.ts'
 
 const RIF_RE = /^[JGVEPC]-\d{8}-\d$/
@@ -21,8 +23,11 @@ Deno.serve(async (req) => {
     if (foundation.status !== 'active') throw new HttpError(403, 'foundation_suspended', 'Fundación suspendida')
 
     const body = await readBody(req)
-    const concept = typeof body.concept === 'string' ? body.concept.trim() : ''
-    if (concept.length < 3 || concept.length > 80) throw new HttpError(400, 'invalid_body', 'El concepto debe tener entre 3 y 80 caracteres')
+    const givenConcept = typeof body.concept === 'string' ? body.concept.trim() : ''
+    if (givenConcept !== '' && (givenConcept.length < 3 || givenConcept.length > 80)) {
+      throw new HttpError(400, 'invalid_body', 'El concepto debe tener entre 3 y 80 caracteres')
+    }
+    const concept = givenConcept === '' ? CONCEPT_PENDING : givenConcept
     const rif = typeof body.supplier_rif === 'string' ? body.supplier_rif.trim().toUpperCase() : ''
     if (!RIF_RE.test(rif)) throw new HttpError(400, 'invalid_body', 'RIF del proveedor inválido')
     if (typeof body.amount !== 'number' || !Number.isFinite(body.amount)) throw new HttpError(400, 'invalid_amount', 'Monto inválido')
