@@ -15,7 +15,8 @@ import { useFoundationInvoices } from '../hooks/useFoundationInvoices'
 import { useMyFoundation } from '../hooks/useMyFoundation'
 import { recordInvoiceHash } from '../lib/contract'
 import { ApiError, verifySpend, type VerifySpendResult } from '../lib/api'
-import { formatUSDT, formatUSDTCompact, RIF_RE, sha256Hex } from '../lib/format'
+import { explorerTx } from '../lib/chain'
+import { formatUSDT, formatUSDTCompact, RIF_RE, sha256Hex, shortHash } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { BUCKETS, fileExtension, uploadFile } from '../lib/storage'
 import type { Foundation } from '../types'
@@ -210,11 +211,16 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
       if (!token) throw new Error('Tu sesión expiró. Inicia sesión de nuevo.')
       const verdict = await verifySpend(token, target.invoiceId, target.originPath, target.destPath)
       setResult(verdict)
+      if (verdict.release?.status === 'pending') {
+        // Verified, but the on-chain release failed (e.g. custody without gas): keep the invoice so the
+        // button retries only the release (the server does not repeat the model call).
+        setSubmitError('El gasto fue verificado, pero la liberación on-chain quedó pendiente. Reintenta en unos minutos.')
+        onSent()
+        return
+      }
       setSaved(null)
       setOriginFile(null)
       setDestFile(null)
-      // TODO fase agente: mark the matching tranche(s) as in_review for the affected donations
-      // (needs the service role; the audit agent / an Edge Function will do it when it picks the invoice up).
       reset({ rif: '', concept: '' })
       setFiles([])
       onSent()
@@ -305,6 +311,22 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
             >
               <strong style={{ color: result.status === 'verified' ? '#135E3C' : '#8E1B47' }}>{result.status === 'verified' ? 'Gasto verificado' : 'Gasto rechazado'}</strong>
               <span style={{ fontSize: '13px', color: '#5A5468' }}>{result.review_note}</span>
+              {result.release?.status === 'released' && result.release.released_count > 0 && (
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>
+                  Se liberaron {formatUSDT(result.release.released_usd)} ({result.release.released_count} {result.release.released_count === 1 ? 'tramo' : 'tramos'}).{' '}
+                  {result.release.tx_hash && (
+                    <a href={explorerTx(result.release.tx_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, textDecoration: 'none' }}>
+                      tx {shortHash(result.release.tx_hash)} ↗
+                    </a>
+                  )}
+                </span>
+              )}
+              {result.release?.status === 'none' && <span style={{ fontSize: '13px', color: '#5A5468' }}>No había tramos pendientes de liberar para este gasto.</span>}
+              {result.refund && (
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#8E1B47' }}>
+                  Tu fundación quedó congelada. Se reembolsó el 100% a {result.refund.refunds} {result.refund.refunds === 1 ? 'donación' : 'donaciones'} ({formatUSDT(result.refund.refunded_usd)}).
+                </span>
+              )}
               <AgentChecks checks={result.checks} />
             </div>
           )}
@@ -432,6 +454,11 @@ export default function PanelFundacion() {
                       <td style={{ padding: '14px 16px', ...MONO }}>{formatUSDT(inv.amount)}</td>
                       <td style={{ padding: '14px 16px' }}>
                         <StatusBadge status={inv.status} size="sm" label={inv.status === 'verified' ? 'Sellada' : undefined} />
+                        {inv.release_tx_hash && (
+                          <a href={explorerTx(inv.release_tx_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, display: 'block', marginTop: '4px', fontSize: '12px', textDecoration: 'none' }}>
+                            tx {shortHash(inv.release_tx_hash)} ↗
+                          </a>
+                        )}
                       </td>
                     </tr>
                   ))}

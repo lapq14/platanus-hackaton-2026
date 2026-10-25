@@ -88,10 +88,20 @@ export interface RegisterFoundationInput {
 export const registerFoundation = (token: string, input: RegisterFoundationInput) =>
   callFn<{ foundation: Foundation }>('register-foundation', token, input)
 
+/** What happened to the tranches of a verified spend: paid, nothing to pay, or the on-chain send must be retried. */
+export type SpendReleaseInfo =
+  | { status: 'released'; tx_hash?: string; released_count: number; released_usd: number }
+  | { status: 'none'; released_count: 0; released_usd: 0 }
+  | { status: 'pending'; error: string; message: string }
+
 export interface VerifySpendResult {
   status: 'verified' | 'rejected'
   checks: AgentCheck[]
   review_note: string
+  /** Present when status = 'verified'. */
+  release?: SpendReleaseInfo
+  /** Present when status = 'rejected': the foundation was frozen and the donors refunded 100%. */
+  refund?: { refunds: number; refunded_usd: number; foundation_status: 'frozen' }
 }
 
 /** Runs the AI + registry verification of the two spend documents (origin proof, destination business doc). */

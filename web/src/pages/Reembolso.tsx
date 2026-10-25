@@ -66,7 +66,7 @@ export default function Reembolso() {
             vuelve a ti.
           </h1>
           <p style={{ margin: 0, fontSize: '18px', lineHeight: 1.5, color: '#5A5468', maxWidth: '480px' }}>
-            El agente auditor encontró un problema: {reason} La fundación quedó congelada y tu saldo en custodia regresó a tu billetera.
+            El agente auditor encontró un problema: {reason} La fundación quedó congelada y te devolvimos el 100% de tu donación a tu saldo.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
             <PrimaryButton to="/" minHeight={52} padding="0 22px">

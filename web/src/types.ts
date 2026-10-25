@@ -85,6 +85,8 @@ export interface Invoice {
   file_paths: string[]
   file_hash: string | null
   file_hashes: string[]
+  /** On-chain transfer that released the invoice's tranches (null until the release is sent). */
+  release_tx_hash?: string | null
   status: InvoiceStatus
   agent_checks: AgentCheck[]
   review_note: string | null

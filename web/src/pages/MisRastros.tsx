@@ -41,7 +41,7 @@ function buildSteps(d: Donation, invoices: Record<string, Invoice>): TimelineSte
     if (t.index === 1) {
       return t.state === 'released'
         ? { state: t.state, title: `${prefix}entrega inicial`, amount: t.amount, description: `Liberado al donar (Nivel ${LEVEL_ROMAN[level]} = ${pct}%).`, hash: t.tx_hash ? { prefix: 'tx', value: t.tx_hash } : undefined }
-        : { state: t.state, title: `${prefix}entrega inicial`, amount: t.amount, description: t.state === 'broken' ? 'Devuelto a tu billetera.' : 'La entrega inicial está en proceso.' }
+        : { state: t.state, title: `${prefix}entrega inicial`, amount: t.amount, description: t.state === 'broken' ? 'No se liberó: tu donación fue reembolsada a tu saldo.' : 'La entrega inicial está en proceso.' }
     }
     switch (t.state) {
       case 'released':
@@ -50,12 +50,13 @@ function buildSteps(d: Donation, invoices: Record<string, Invoice>): TimelineSte
           title: `${prefix}factura enviada`,
           amount: t.amount,
           description: inv ? `${inv.concept} · Factura ${inv.number} · RIF verificado.` : 'Factura sellada · RIF verificado.',
-          hash: inv?.file_hash ? { prefix: 'hash', value: inv.file_hash } : undefined,
+          // The on-chain release tx is what the donor can verify; fall back to the invoice hash for legacy rows.
+          hash: t.tx_hash ? { prefix: 'tx', value: t.tx_hash } : inv?.file_hash ? { prefix: 'hash', value: inv.file_hash } : undefined,
         }
       case 'in_review':
         return { state: t.state, title: `${prefix}en revisión`, amount: t.amount, description: 'El agente auditor está revisando factura y RIF.' }
       case 'broken':
-        return { state: t.state, title: `${prefix}sello roto`, amount: t.amount, description: 'Devuelto a tu billetera.' }
+        return { state: t.state, title: `${prefix}sello roto`, amount: t.amount, description: 'No se liberó: tu donación fue reembolsada a tu saldo.' }
       case 'in_custody':
         return { state: t.state, title: `${prefix}en custodia`, amount: t.amount, description: `Se libera cuando el paso ${t.index - 1} se complete.` }
     }
@@ -132,7 +133,8 @@ export default function MisRastros() {
 
   const selected = donations.find((d) => d.id === params.get('donacion')) ?? donations[0] ?? null
 
-  const allTranches = donations.flatMap((d) => d.tranches ?? [])
+  // Refunded donations no longer count as delivered or in custody: the donor got 100% back.
+  const allTranches = donations.filter((d) => d.status !== 'refunded').flatMap((d) => d.tranches ?? [])
   const sum = (states: string[]) => allTranches.filter((t) => states.includes(t.state)).reduce((s, t) => s + t.amount, 0)
   const delivered = sum(['released'])
   const custody = sum(['in_custody', 'in_review'])

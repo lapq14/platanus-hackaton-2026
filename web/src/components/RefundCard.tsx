@@ -20,6 +20,9 @@ export default function RefundCard({ donation, refund, email }: RefundCardProps)
   const delivered = tranches.filter((t) => t.state === 'released')
   const deliveredTotal = delivered.reduce((s, t) => s + t.amount, 0)
   const firstBroken = tranches.find((t) => t.state === 'broken')
+  const custodyReturned = tranches.filter((t) => t.state === 'broken').reduce((s, t) => s + t.amount, 0)
+  // Full refunds also return what was already delivered on-chain (it cannot be clawed back: the platform absorbs it).
+  const covered = Math.max(0, Math.round((refund.amount - custodyReturned) * 100) / 100)
   const pct = donation.initial_pct ?? LEVEL_RELEASE[toLevel(donation.foundation?.level ?? 1)]
 
   // The first broken tranche shows the broken seal; later ones are dimmed (they will never be released).
@@ -43,19 +46,28 @@ export default function RefundCard({ donation, refund, email }: RefundCardProps)
         ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={ROW}>
-          <span style={{ color: '#5A5468' }}>
-            {delivered.length <= 1 ? `Tramo 1 · entregado al donar (${pct}%)` : `Tramos 1–${delivered.length} · entregados`}
-          </span>
-          <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(deliveredTotal)}</span>
-        </div>
+        {covered > 0 ? (
+          <div style={ROW}>
+            <span style={{ color: '#5A5468' }}>
+              {delivered.length <= 1 ? `Tramo 1 · ya entregado (${pct}%)` : `Tramos 1–${delivered.length} · ya entregados`}, cubierto por Trazo
+            </span>
+            <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(covered)}</span>
+          </div>
+        ) : (
+          <div style={ROW}>
+            <span style={{ color: '#5A5468' }}>
+              {delivered.length <= 1 ? `Tramo 1 · entregado al donar (${pct}%)` : `Tramos 1–${delivered.length} · entregados`}
+            </span>
+            <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(deliveredTotal)}</span>
+          </div>
+        )}
         <div style={ROW}>
           <span style={{ color: '#5A5468' }}>Custodia devuelta (tramos {firstBroken?.index ?? 2}–4)</span>
-          <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(refund.amount)}</span>
+          <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(covered > 0 ? custodyReturned : refund.amount)}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0 0', borderTop: '1.5px solid #1B1530' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <strong style={{ fontSize: '16px' }}>Depositado en tu billetera</strong>
+            <strong style={{ fontSize: '16px' }}>{refund.tx_hash ? 'Depositado en tu billetera' : 'Devuelto a tu saldo'}</strong>
             {refund.tx_hash && (
               <a href={explorerTx(refund.tx_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, fontSize: '13px', textDecoration: 'none' }}>
                 tx {shortHash(refund.tx_hash)} ↗

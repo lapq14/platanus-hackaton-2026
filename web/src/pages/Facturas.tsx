@@ -29,7 +29,7 @@ type SortKey = 'date' | 'amount'
 /** Note under the concept: tranche + short hash when verified, reason when rejected, agent progress otherwise. */
 function noteFor(i: Invoice): string {
   const tramo = i.tranche_index ? `Tramo ${i.tranche_index}` : 'Tramo'
-  if (i.status === 'verified') return `${tramo}${i.file_hash ? ` · hash ${shortHash(i.file_hash)}` : ''}`
+  if (i.status === 'verified') return `${tramo}${i.release_tx_hash ? ` · tx ${shortHash(i.release_tx_hash)}` : i.file_hash ? ` · hash ${shortHash(i.file_hash)}` : ''}`
   if (i.status === 'rejected') return i.review_note ?? 'Factura rechazada'
   return hasFailedCheck(i) ? `${tramo} · revisión humana sugerida` : `${tramo} · agente revisando RIF`
 }
