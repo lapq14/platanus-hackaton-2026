@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { usePrivy } from '@privy-io/react-auth'
 import { useCurrentUser } from '../hooks/useCurrentUser'
+import { useLogout } from '../hooks/useLogout'
 import { formatUSDT } from '../lib/format'
 import Logo from './Logo'
 import TopUpModal from './TopUpModal'
@@ -145,8 +146,9 @@ export function DonorHeaderView({ active, balance, initial, foundationHref, onLo
 
 /** Donor header wired to Privy + the simulated balance. */
 export default function DonorHeader({ active }: { active: Active }) {
-  const { login, logout, authenticated } = usePrivy()
+  const { login, authenticated } = usePrivy()
   const { balance, dbUser, user, email } = useCurrentUser()
+  const logout = useLogout()
   const [topUp, setTopUp] = useState(false)
 
   const name = user?.google?.name ?? email ?? 'D'
