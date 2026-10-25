@@ -1,5 +1,6 @@
 export type UserRole = 'donor' | 'ong' | 'auditor'
 /** `ong` in the app = foundation in the product copy. */
+/** `active` = accepted/validated by the registration auditor; `rejected` = registration rejected (can be resubmitted). */
 export type FoundationStatus = 'active' | 'pending' | 'frozen' | 'rejected'
 export type DonationStatus = 'in_escrow' | 'partially_released' | 'completed' | 'refunded'
 export type VerificationStatus = 'pending' | 'approved' | 'rejected'
@@ -52,6 +53,8 @@ export interface Foundation {
   tiktok_url: string | null
   x_url: string | null
   contract_address: string | null
+  /** Auditor's reason when status = 'rejected' (only the owner can read it). */
+  rejection_reason?: string | null
 }
 
 /** Row of the `foundation_stats` view (no donor identity). */

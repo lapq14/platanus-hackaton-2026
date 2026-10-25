@@ -21,12 +21,18 @@ interface UseRow {
 }
 interface TrancheRow {
   invoice_id: string | null
-  uses?: UseRow[]
+  uses?: UseRow[] | UseRow | null
+}
+interface RefundRow {
+  invoice_id: string | null
 }
 interface DonationRow {
-  tranches?: TrancheRow[]
-  refunds?: { invoice_id: string | null }[]
+  tranches?: TrancheRow[] | TrancheRow | null
+  // `refunds.donation_id` is UNIQUE, so PostgREST embeds the refund as a single object (or null), not a list.
+  refunds?: RefundRow[] | RefundRow | null
 }
+
+const asList = <T>(v: T[] | T | null | undefined): T[] => (Array.isArray(v) ? v : v ? [v] : [])
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -66,16 +72,21 @@ Deno.serve(async (req) => {
       .eq('donor_id', user.id)
       .order('created_at', { ascending: false })
     if (error) throw dbError(error)
-    const donations = (data ?? []) as DonationRow[]
 
-    // Invoices referenced by the uses, by the tranche that an invoice unlocked, or by a refund.
+    // Always answer lists: the client maps over `tranches` and `refunds`.
+    const donations = ((data ?? []) as DonationRow[]).map((d) => ({
+      ...d,
+      tranches: asList(d.tranches).map((t) => ({ ...t, uses: asList(t.uses) })),
+      refunds: asList(d.refunds),
+    }))
+
     const ids = new Set<string>()
     for (const d of donations) {
-      for (const t of d.tranches ?? []) {
+      for (const t of d.tranches) {
         if (t.invoice_id) ids.add(t.invoice_id)
-        for (const u of t.uses ?? []) ids.add(u.invoice_id)
+        for (const u of t.uses) ids.add(u.invoice_id)
       }
-      for (const r of d.refunds ?? []) if (r.invoice_id) ids.add(r.invoice_id)
+      for (const r of d.refunds) if (r.invoice_id) ids.add(r.invoice_id)
     }
 
     let invoices: unknown[] = []

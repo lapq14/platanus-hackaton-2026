@@ -4,7 +4,7 @@ import type { AgentCheck, Donation, Foundation, FoundationTrace, FundsView, Invo
 /** Quick top-up amounts (USD) offered in the top-up modal. */
 export const TOPUP_PRESETS = [50, 100, 500] as const
 
-/** Maximum simulated balance per user (USD); enforced by the database. */
+/** Maximum simulated balance per user (USD); enforced by `wallet_top_up` (server side). */
 export const BALANCE_CAP = 10000
 
 export class ApiError extends Error {
@@ -109,6 +109,26 @@ export interface RegisterFoundationInput {
 
 export const registerFoundation = (token: string, input: RegisterFoundationInput) =>
   callFn<{ foundation: Foundation }>('register-foundation', token, input)
+
+export interface ValidateRegistrationInput {
+  /** Intake path (bucket `rif-docs`) of a freshly uploaded RIF document; omit to re-run on the stored one. */
+  rif_doc_path?: string
+  /** Optional corrections, applied only while the registration is pending/rejected. */
+  rif?: string
+  name?: string
+}
+
+export interface ValidateRegistrationResult {
+  /** `active` = accepted; `rejected` = the auditor rejected it; `pending` is never returned (errors are thrown). */
+  status: 'active' | 'rejected'
+  checks: AgentCheck[]
+  reason: string | null
+  email: 'sent' | 'failed' | 'skipped' | 'none'
+}
+
+/** Runs the AI auditor on the caller's RIF document. Throws ApiError (502/504 = model failed, still pending). */
+export const validateRegistration = (token: string, input: ValidateRegistrationInput) =>
+  callFn<ValidateRegistrationResult>('validate-registration', token, input)
 
 /** What happened to the tranches of a verified spend: paid, nothing to pay, or the on-chain send must be retried. */
 export type SpendReleaseInfo =

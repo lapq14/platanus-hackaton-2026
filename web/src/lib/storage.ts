@@ -5,6 +5,8 @@ export const BUCKETS = {
   logos: 'foundation-logos',
   legal: 'legal-docs',
   invoices: 'invoices',
+  /** Private; the browser can only insert `{uuid}.{pdf|jpg|png}` at the root (intake), never read. */
+  rif: 'rif-docs',
 } as const
 
 /** Uploads a file and returns its storage path. Throws a readable error on failure. */
@@ -18,6 +20,9 @@ export async function uploadFile(bucket: string, path: string, file: File): Prom
 export function publicLogoUrl(path: string): string {
   return supabase.storage.from(BUCKETS.logos).getPublicUrl(path).data.publicUrl
 }
+
+/** Extension allowed by the `rif-docs` intake policy, derived from the MIME type (never from the file name). */
+export const rifExtension = (file: File): string => (file.type === 'application/pdf' ? 'pdf' : file.type === 'image/png' ? 'png' : 'jpg')
 
 export const fileExtension = (file: File): string => {
   const fromName = file.name.split('.').pop()?.toLowerCase()

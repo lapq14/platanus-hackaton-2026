@@ -211,7 +211,7 @@ export async function optionalUser(req: Request): Promise<UserRow | null> {
   }
 }
 
-/** Foundation columns safe to show to anyone (never official_email nor the legal documents). */
+/** Foundation columns safe to show to anyone (never official_email, rejection_reason nor the legal documents). */
 export const PUBLIC_FOUNDATION_COLUMNS =
   'id, user_id, name, description, category, logo_url, wallet_address, reputation_score, payout_percentage, status, total_received, created_at, rif, country, city, level, instagram_url, tiktok_url, x_url, contract_address'
 
@@ -416,7 +416,7 @@ export async function releaseSpend(invoiceId: string): Promise<SpendReleaseResul
 
     // Send. A failure before a hash exists is safe to compensate; after a hash exists, never.
     const releaseWei = BigInt(sumCents(pending)) * 10_000_000_000n
-    const to = (invoice.foundation as { wallet_address: string } | null)?.wallet_address
+    const to = (invoice.foundation as unknown as { wallet_address: string } | null)?.wallet_address
     if (!to) throw new HttpError(500, 'internal_error', 'Error interno del servidor')
     try {
       txHash = await sendRelease(to, releaseWei)

@@ -5,7 +5,7 @@ export const digits = (v: string) => v.replace(/\D/g, '')
 export const normalizeName = (v: string) =>
   v
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/\p{M}/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\b(c a|ca|s a|sa|a c|ac|fundacion|asociacion civil)\b/g, ' ')

@@ -20,11 +20,13 @@ Deno.serve(async (req) => {
       throw new HttpError(400, 'invalid_body', 'email inválido')
     }
 
-    // 1. Claim a legacy row (created before privy_id was enforced) for this identity.
+    // 1. Claim a legacy row (created before privy_id was enforced) for this identity. Only plain donor rows
+    // are claimable: knowing a wallet address must never grant the role of a seeded auditor / ong row.
     const { error: claimErr } = await admin
       .from('users')
       .update({ privy_id: did })
       .eq('wallet_address', wallet)
+      .eq('role', 'donor')
       .is('privy_id', null)
     if (claimErr) throw claimErr.code === '23505' ? walletTaken() : dbError(claimErr)
 

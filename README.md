@@ -192,6 +192,7 @@ Todas se despliegan con `verify_jwt = false` porque reciben tokens de Privy, no 
 | `release-initial` | Sí | Reintenta la entrega inicial. Solo el donante dueño de la donación puede llamarla. |
 | `my-donations` | Sí | Donaciones del donante con cada tramo, sus usos y las facturas asociadas. Para la fundación, las donaciones recibidas con un alias del donante. |
 | `register-foundation` | Sí | Crea la fundación del usuario y le da el rol de organización. |
+| `validate-registration` | Sí | Auditor IA del registro: valida el RIF (formato y dígito verificador en código, datos del documento con el modelo, duplicados) y pasa la fundación de `pending` a `active` o `rejected`. Si el modelo falla deja `pending` y se puede reintentar. Envía el resultado por correo (Resend). |
 | `report-spend` | Sí | Crea un gasto en revisión y rechaza uno que supere el saldo disponible. |
 | `verify-spend` | Sí | Verifica el gasto con el agente. Si pasa, lo atribuye a los aportes y desbloquea tramos. Si no, congela y reembolsa. |
 | `upload-url` | Sí | Entrega una URL firmada de subida bajo la carpeta de la fundación. Limita tipo, tamaño y cantidad de archivos sin usar. |
@@ -203,6 +204,11 @@ Todas se despliegan con `verify_jwt = false` porque reciben tokens de Privy, no 
 | `claim-foundation` | Sí | Canjea un código de un solo uso para administrar una fundación del catálogo. |
 | `document-url` | Opcional | URL firmada de 60 segundos. Las facturas verificadas son públicas. Todo lo demás exige ser la fundación dueña o un auditor. |
 | `foundation-trace` | No | Rastro público de una fundación: gastos, quién los pagó y todos los aportes con sus tramos. |
+
+### Auditor del registro
+
+Estados de `foundations.status`: `pending` (en revisión), `active` (aceptada/validada), `rejected` (con `rejection_reason`; puede reenviarse) y `frozen`. El documento RIF se sube al bucket privado `rif-docs` (entrada `{uuid}.ext`; la función lo mueve a `{foundation_id}/`). Los datos validados (RIF, razón social, tipo de contribuyente, domicilio fiscal, veredicto, checks) quedan en `foundation_verifications`, tabla solo accesible con service role; `verify-spend` los usa para comparar el RIF y el nombre de la fundación. Las pruebas del validador de RIF: `deno test supabase/functions/_shared/rif.test.ts`.
+` los usa para comparar el RIF y el nombre de la fundación. Las pruebas del validador de RIF: `deno test supabase/functions/_shared/rif.test.ts`.
 
 ### Respaldo de gastos y apelaciones
 
@@ -281,6 +287,11 @@ Cada paquete tiene su propio archivo. No hay `.env` en la raíz. Las plantillas 
 | `PRIVY_VERIFICATION_KEY` | Sí (PEM, saltos de línea como `\n` literal) | - | - | Sí | Sí |
 | `CHAIN_ID` | Opcional (84532) | - | - | Sí | Sí |
 | `CHAIN_RPC` | Opcional (https://sepolia.base.org) | - | - | Sí | Sí |
+| `CHAIN_MODE` | Opcional (`simulated` por defecto; solo `real` envía transacciones en Base Sepolia) | - | - | Sí | Sí |
+| `ANTHROPIC_API_KEY` | Sí (verificación de gastos con `verify-spend` y del registro con `validate-registration`) | - | - | Sí | Sí |
+| `RESEND_API_KEY` | Opcional (correo de resultado del registro; sin ella no se envía y queda registrado como `skipped`) | - | - | Sí | Sí |
+| `EMAIL_FROM` | Opcional (por defecto `Rastro <onboarding@resend.dev>`; usa un dominio verificado en Resend) | - | - | Sí | Sí |
+| `APP_URL` | Opcional (URL pública del frontend, para el enlace al panel en el correo) | - | - | Sí | Sí |
 | `SUPABASE_URL` | Solo local | - | - | Sí | No (se inyecta sola) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Solo local | - | - | Sí | No (se inyecta sola) |
 
@@ -294,18 +305,15 @@ El frontend valida sus variables al arrancar. Si falta una requerida, falla con 
 
 **Backend en Supabase.** Orden de despliegue:
 
-1. Cargar los secretos de las funciones: `npx supabase secrets set CHAIN_ID=... CHAIN_RPC=... ESCROW_PRIVATE_KEY=... PRIVY_APP_ID=... PRIVY_VERIFICATION_KEY=... ANTHROPIC_API_KEY=...`
-2. Aplicar las migraciones en orden. La última, `*_tranche_queue.sql`, introduce los cinco niveles y la cola de tramos, migra los datos existentes y cierra la lectura pública de las tablas privadas.
-3. Desplegar todas las funciones de `supabase/functions`.
+1. Cargar los secretos de las funciones: `npx supabase secrets set CHAIN_ID=... CHAIN_RPC=... ESCROW_PRIVATE_KEY=... PRIVY_APP_ID=... PRIVY_VERIFICATION_KEY=... ANTHROPIC_API_KEY=... CHAIN_MODE=simulated`. `CHAIN_MODE` es opcional: sin definir (o con cualquier valor distinto de `real`) la cadena es simulada y no hace falta ETH. Opcional para el correo: `RESEND_API_KEY`, `EMAIL_FROM`, `APP_URL`.
+2. Aplicar las migraciones en orden. Incluyen la cola de tramos con los cinco niveles, el cierre de lectura pública de las tablas privadas, el auditor del registro y las herramientas de la fundación (plazo de 7 días, apelaciones, subidas controladas y códigos de reclamo).
+3. Desplegar todas las funciones de `supabase/functions`, incluida `validate-registration`. `verify-spend` incluye el código compartido.
 4. Desplegar el frontend. La migración de privacidad deja de servir `foundations`, `invoices` y `donations` por la clave pública, así que el frontend viejo deja de funcionar y conviene desplegarlo enseguida.
-
-La clave de verificación de Privy se obtiene en Privy Dashboard, sección Configuration, App settings. En Privy hay que activar Google como método de login y agregar la URL de producción en Allowed origins.
-
-## Próximos pasos
-
-1. Correo de alerta al donante cuando se reembolsa su donación (Resend).
-2. Que la consola del auditor humano ejecute decisiones reales, además del agente.
-3. Contrato en Solidity que registre el score de reputación y los hashes de verificación.
+istre el score de reputación y los hashes de verificación.
 4. Cambiar la red a la testnet del hackatón.
 5. Resolución de apelaciones por soporte técnico, con su propio panel.
 6. Una cola más justa para los aportes recientes, cuyo siguiente tramo tarda más en desbloquearse.
+or flow.
+- The simulated balance cannot be withdrawn and there are no admin top-ups.
+
+Have fun! 🚀

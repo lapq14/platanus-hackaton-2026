@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { FOUNDATION_COLUMNS } from '../lib/columns'
+import { OWN_FOUNDATION_COLUMNS } from '../lib/columns'
 import { toFoundation, toStats } from '../lib/normalize'
 import type { Foundation, FoundationStats } from '../types'
 import { useCurrentUser } from './useCurrentUser'
@@ -20,7 +20,7 @@ export function useMyFoundation() {
 
   const load = useCallback(async () => {
     if (!userId) return
-    const f = await supabase.from('foundations').select(FOUNDATION_COLUMNS).eq('user_id', userId).maybeSingle()
+    const f = await supabase.from('foundations').select(OWN_FOUNDATION_COLUMNS).eq('user_id', userId).maybeSingle()
     if (f.error) {
       setState({ foundation: null, stats: null, loading: false, error: f.error.message })
       return

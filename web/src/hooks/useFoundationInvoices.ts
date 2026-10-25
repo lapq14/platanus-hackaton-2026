@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { INVOICES_VIEW } from '../lib/columns'
 import { toInvoice } from '../lib/normalize'
 import type { Invoice } from '../types'
 
@@ -18,7 +19,7 @@ export function useFoundationInvoices(foundationId: string | undefined) {
   const load = useCallback(async () => {
     if (!foundationId) return
     const { data, error: err } = await supabase
-      .from('invoices_public')
+      .from(INVOICES_VIEW)
       .select('*')
       .eq('foundation_id', foundationId)
       .order('uploaded_at', { ascending: false })

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { usePrivy } from '@privy-io/react-auth'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -10,11 +10,11 @@ import Logo from '../components/Logo'
 import PageShell from '../components/PageShell'
 import { CATEGORIES, LEVEL_RELEASE } from '../config/levels'
 import { useCurrentUser } from '../hooks/useCurrentUser'
-import { ApiError, registerFoundation } from '../lib/api'
+import { ApiError, registerFoundation, validateRegistration } from '../lib/api'
 import { recordInvoiceHash } from '../lib/contract'
 import { RIF_RE, sha256Hex } from '../lib/format'
 import { supabase } from '../lib/supabase'
-import { BUCKETS, fileExtension, publicLogoUrl, uploadFile } from '../lib/storage'
+import { BUCKETS, fileExtension, publicLogoUrl, rifExtension, uploadFile } from '../lib/storage'
 
 const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
 const DRAFT_KEY = 'rastro:registro-draft'
@@ -24,6 +24,7 @@ const TOTAL_FIELDS = 10
 const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml']
 const LOGO_MAX = 2 * 1024 * 1024
 const PDF_MAX = 10 * 1024 * 1024
+const RIF_DOC_TYPES = ['application/pdf', 'image/jpeg', 'image/png']
 
 // One schema per field; sections and the full form are composed from them, so the sidebar counters
 // and the validation always agree.
@@ -40,11 +41,11 @@ const fields = {
   wallet: z.string().trim().refine((v) => isAddress(v, { strict: false }), 'Debe empezar con 0x y tener 42 caracteres.'),
   email: z.email('Revisa el correo.'),
   logo: z.custom<File | null>((v) => v instanceof File, 'Sube el logotipo.'),
-  legal: z.custom<File | null>((v) => v instanceof File, 'Sube el acta constitutiva.'),
+  rifDoc: z.custom<File | null>((v) => v instanceof File, 'Sube el documento de RIF.'),
 }
 const sectionA = ['name', 'rif', 'desc', 'cat', 'country', 'city'] as const
 const sectionB = ['wallet', 'email'] as const
-const sectionC = ['logo', 'legal'] as const
+const sectionC = ['logo', 'rifDoc'] as const
 
 const schema = z.object({ ...fields, accept: z.boolean().refine((v) => v === true, 'Acepta las condiciones.') })
 type Values = z.input<typeof schema>
@@ -129,19 +130,21 @@ export default function Registro() {
       wallet: draft.wallet ?? '',
       email: draft.email ?? '',
       logo: null,
-      legal: null,
+      rifDoc: null,
       accept: false,
     },
   })
   const values = useWatch({ control })
 
   const [rifTaken, setRifTaken] = useState(false)
-  const [fileErrors, setFileErrors] = useState<{ logo?: string; legal?: string }>({})
+  const [fileErrors, setFileErrors] = useState<{ logo?: string; rifDoc?: string }>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  // Result of the AI auditor right after registering: 'pending' = it could not decide yet (retry from the panel).
+  const [outcome, setOutcome] = useState<{ status: 'active' | 'rejected' | 'pending'; reason?: string | null } | null>(null)
   // Uploads already done are kept so a retry only repeats the part that failed.
-  const uploaded = useRef<{ logoUrl?: string; legalPath?: string; legalHash?: string }>({})
+  const uploaded = useRef<{ logoUrl?: string; rifPath?: string; rifHash?: string }>({})
 
   // Prefill wallet and e-mail from the Privy session (only while the user has not typed anything).
   useEffect(() => {
@@ -186,7 +189,7 @@ export default function Registro() {
   }, [rifValue])
 
   const okField = (k: keyof typeof fields): boolean => {
-    const v = k === 'logo' || k === 'legal' ? (values[k] ?? null) : (values[k] ?? '')
+    const v = k === 'logo' || k === 'rifDoc' ? (values[k] ?? null) : (values[k] ?? '')
     const ok = fields[k].safeParse(v).success
     return k === 'rif' ? ok && !rifTaken : ok
   }
@@ -199,7 +202,11 @@ export default function Registro() {
   const accept = !!values.accept
   const ready = missing === 0 && accept && !!dbUser === authenticated
   const status = sent
-    ? 'Recibido. Te escribiremos al correo oficial cuando el auditor apruebe tu registro.'
+    ? outcome?.status === 'active'
+      ? 'Registro validado. Tu organización ya está aceptada y puede subir facturas.'
+      : outcome?.status === 'rejected'
+        ? `Registro rechazado: ${outcome.reason ?? 'no pudimos validar el documento.'} Puedes corregirlo y reenviarlo desde tu panel.`
+        : 'Recibido. No pudimos completar la validación ahora; tu registro sigue en revisión y puedes reintentar desde tu panel.'
     : missing > 0
       ? `Faltan ${missing} campos.`
       : accept
@@ -229,14 +236,13 @@ export default function Registro() {
     uploaded.current.logoUrl = undefined
     setValue('logo', file, { shouldValidate: true })
   }
-  const pickLegal = (files: File[]) => {
+  const pickRifDoc = (files: File[]) => {
     const file = files[0]
-    const msg = file.type !== 'application/pdf' ? 'Solo se aceptan archivos PDF.' : file.size > PDF_MAX ? 'El PDF pesa más de 10 MB.' : undefined
-    setFileErrors((e) => ({ ...e, legal: msg }))
+    const msg = !RIF_DOC_TYPES.includes(file.type) ? 'Usa PDF, JPG o PNG.' : file.size > PDF_MAX ? 'El archivo pesa más de 10 MB.' : undefined
+    setFileErrors((e) => ({ ...e, rifDoc: msg }))
     if (msg) return
-    uploaded.current.legalPath = undefined
-    uploaded.current.legalHash = undefined
-    setValue('legal', file, { shouldValidate: true })
+    uploaded.current.rifPath = undefined
+    setValue('rifDoc', file, { shouldValidate: true })
   }
   const logoPreview = useMemo(() => (values.logo instanceof File ? URL.createObjectURL(values.logo) : null), [values.logo])
   useEffect(() => {
@@ -249,12 +255,12 @@ export default function Registro() {
     setSubmitError(null)
     if (!authenticated) {
       // Keep what was typed (files cannot be stored) and come back after the Privy login.
-      const { logo: _l, legal: _g, accept: _a, ...text } = v
+      const { logo: _l, rifDoc: _r, accept: _a, ...text } = v
       sessionStorage.setItem(DRAFT_KEY, JSON.stringify(text))
       login()
       return
     }
-    if (!dbUser || !(v.logo instanceof File) || !(v.legal instanceof File)) return
+    if (!dbUser || !(v.logo instanceof File) || !(v.rifDoc instanceof File)) return
     try {
       setBusy('Subiendo logotipo…')
       if (!uploaded.current.logoUrl) {
@@ -263,14 +269,12 @@ export default function Registro() {
         })
         uploaded.current.logoUrl = publicLogoUrl(path)
       }
-      setBusy('Subiendo acta…')
-      if (!uploaded.current.legalPath) {
-        const hash = await sha256Hex(v.legal)
-        const path = await uploadFile(BUCKETS.legal, `${crypto.randomUUID()}.pdf`, v.legal).catch(() => {
-          throw new Error('No pudimos subir el acta. Tus datos siguen aquí: reintenta.')
+      setBusy('Subiendo RIF…')
+      if (!uploaded.current.rifPath) {
+        uploaded.current.rifHash = await sha256Hex(v.rifDoc)
+        uploaded.current.rifPath = await uploadFile(BUCKETS.rif, `${crypto.randomUUID()}.${rifExtension(v.rifDoc)}`, v.rifDoc).catch(() => {
+          throw new Error('No pudimos subir el documento de RIF. Tus datos siguen aquí: reintenta.')
         })
-        uploaded.current.legalPath = path
-        uploaded.current.legalHash = hash
       }
       setBusy('Enviando registro…')
       const token = await getAccessToken()
@@ -285,13 +289,19 @@ export default function Registro() {
         official_email: v.email.trim(),
         wallet_address: v.wallet.trim(),
         logo_url: uploaded.current.logoUrl,
-        legal_doc_path: uploaded.current.legalPath,
-        legal_doc_hash: uploaded.current.legalHash,
       })
-      // TODO fase contrato: record the legal document hash on-chain (hash of the acta).
-      await recordInvoiceHash(foundation.id, uploaded.current.legalHash as `0x${string}`)
+      // TODO fase contrato: record the RIF document hash on-chain.
+      await recordInvoiceHash(foundation.id, uploaded.current.rifHash as `0x${string}`)
       sessionStorage.removeItem(DRAFT_KEY)
       await refresh() // role is now 'ong': refresh the cached user so /panel opens.
+      // The AI auditor decides pending -> active | rejected. A model failure leaves it pending (retry from the panel).
+      setBusy('Validando tu RIF…')
+      try {
+        const res = await validateRegistration(token, { rif_doc_path: uploaded.current.rifPath })
+        setOutcome({ status: res.status, reason: res.reason })
+      } catch {
+        setOutcome({ status: 'pending' })
+      }
       setSent(true)
     } catch (e) {
       if (e instanceof ApiError && e.code === 'rif_taken') {
@@ -329,6 +339,10 @@ export default function Registro() {
 
   const rifError = rifTaken ? 'Este RIF ya tiene una cuenta.' : errors.rif?.message
 
+  // One organization per account: whoever already owns one never sees the application form again (fixes and
+  // re-submissions happen in the panel). Not while a submission is running or its result is on screen.
+  if (authenticated && dbUser?.role === 'ong' && !sent && busy === null) return <Navigate to="/panel" replace />
+
   return (
     <PageShell minHeight={1640}>
       <header style={{ borderBottom: '1.5px solid #DAD4CF', background: '#F8F8F8' }}>
@@ -359,7 +373,7 @@ export default function Registro() {
             {sideLink('sec-c', 'C', 'Documentación', cC, sectionC.length)}
             <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <div style={{ height: '8px', borderRadius: '4px', background: '#ECE7F0' }}>
-                <div style={{ height: '8px', borderRadius: '4px', background: '#1A7F52', width: `${done * 10}%` }} />
+                <div style={{ height: '8px', borderRadius: '4px', background: '#1A7F52', width: `${(done / TOTAL_FIELDS) * 100}%` }} />
               </div>
               <span style={HELP}>{done} de {TOTAL_FIELDS} campos completos</span>
             </div>
@@ -457,7 +471,7 @@ export default function Registro() {
             </section>
 
             <section id="sec-c" style={CARD}>
-              <SectionHead letter="C" title="Documentación" subtitle="Se guardan en Supabase Storage; el hash del documento legal queda en cadena." done={cC === sectionC.length} />
+              <SectionHead letter="C" title="Documentación" subtitle="Se guardan en Supabase Storage; el hash del documento de RIF queda en cadena y nuestro auditor lo revisa." done={cC === sectionC.length} />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
                 <div style={{ ...COL, flex: '1 1 260px' }}>
                   <span style={LABEL}>Logotipo o imagen de perfil</span>
@@ -473,16 +487,16 @@ export default function Registro() {
                   {fileErrors.logo && <span role="alert" style={ERR}>{fileErrors.logo}</span>}
                 </div>
                 <div style={{ ...COL, flex: '1 1 260px' }}>
-                  <span style={LABEL}>Acta constitutiva o registro fiscal</span>
+                  <span style={LABEL}>Documento de RIF (SENIAT)</span>
                   <Dropzone
-                    accept="application/pdf"
+                    accept="application/pdf,image/jpeg,image/png"
                     icon="file"
                     title="Arrastra el archivo o haz clic"
-                    hint="Solo PDF · máx. 10 MB"
-                    fileName={values.legal instanceof File ? values.legal.name : null}
-                    onFiles={pickLegal}
+                    hint="PDF, JPG o PNG · máx. 10 MB · lo valida nuestro auditor"
+                    fileName={values.rifDoc instanceof File ? values.rifDoc.name : null}
+                    onFiles={pickRifDoc}
                   />
-                  {fileErrors.legal && <span role="alert" style={ERR}>{fileErrors.legal}</span>}
+                  {fileErrors.rifDoc && <span role="alert" style={ERR}>{fileErrors.rifDoc}</span>}
                 </div>
               </div>
             </section>
@@ -497,7 +511,7 @@ export default function Registro() {
               {submitError && <span role="alert" style={ERR}>{submitError}</span>}
               {sent ? (
                 <div role="status" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-                  <span style={{ fontSize: '15px', fontWeight: 600, color: '#135E3C' }}>{status}</span>
+                  <span style={{ fontSize: '15px', fontWeight: 600, color: outcome?.status === 'active' ? '#135E3C' : outcome?.status === 'rejected' ? '#8E1B47' : '#6B4A00' }}>{status}</span>
                   <Link to="/panel" style={{ minHeight: '54px', padding: '0 26px', borderRadius: '12px', background: '#B4235A', color: '#FFFFFF', fontSize: '17px', fontWeight: 700, display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
                     Ir a mi panel
                   </Link>

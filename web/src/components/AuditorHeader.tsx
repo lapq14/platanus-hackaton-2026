@@ -1,9 +1,11 @@
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
+import { useLogout } from '../hooks/useLogout'
 import Logo from './Logo'
 
 const LINK: CSSProperties = { padding: '10px 16px', borderRadius: '999px', color: '#F6F4EF', textDecoration: 'none', fontSize: '15px' }
 const LINK_ACTIVE: CSSProperties = { ...LINK, background: '#F6F4EF', color: '#1B1530', fontWeight: 600 }
+const LOGOUT: CSSProperties = { fontSize: '13px', border: '1.5px solid #F6F4EF', borderRadius: '999px', padding: '8px 14px', background: 'transparent', color: '#F6F4EF', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }
 
 /**
  * Dark header for the auditor console.
@@ -11,6 +13,7 @@ const LINK_ACTIVE: CSSProperties = { ...LINK, background: '#F6F4EF', color: '#1B
  * ("Agente detenido" in amber when it does not respond).
  */
 export default function AuditorHeader({ agentActive = true }: { agentActive?: boolean }) {
+  const logout = useLogout()
   return (
     <header style={{ background: '#1B1530', color: '#F6F4EF' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '14px 24px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px 28px' }}>
@@ -41,6 +44,9 @@ export default function AuditorHeader({ agentActive = true }: { agentActive?: bo
         >
           {agentActive ? 'Agente activo' : 'Agente detenido'}
         </span>
+        <button type="button" onClick={() => void logout()} style={LOGOUT}>
+          Salir
+        </button>
       </div>
     </header>
   )
