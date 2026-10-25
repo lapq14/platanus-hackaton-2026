@@ -2,15 +2,22 @@
 // POST { invoice_id, origin_path, destination_path } -> { status, checks, review_note }
 //   origin_path       storage path (bucket `invoices`) of the proof that the ORIGIN account belongs to the foundation
 //   destination_path  storage path of the document with the destination business RIF and DESTINATION account
-// Requires an `ong` user that owns the invoice's foundation; the invoice must be `in_review`.
+// Requires an `ong` user that owns the invoice's foundation; the invoice must be `in_review` (or `verified`
+// with its release still pending: then only the release is retried and the documents are not needed).
 //
+// Flow: submit_spend_for_review (targeted tranches -> in_review) -> model -> resolve_spend_verdict ->
+//   verified: releaseSpend (one on-chain transfer + record_spend_release)
+//   rejected: the same SQL transaction freezes the foundation, breaks the unreleased tranches and refunds
+//             100% of every affected donation to the donors' simulated balance.
 // The invoice is marked `verified` ONLY if both the deterministic DB lookups and the Anthropic verdict pass.
-// If the model verdict cannot be obtained the invoice stays `in_review` and an error is returned.
+// If the model verdict cannot be obtained the invoice stays `in_review` (tranches too) and an error is returned.
+// If the on-chain send fails (e.g. escrow without ETH) the invoice stays `verified` with its tranches `in_review`
+// and the response carries release.status = 'pending'; calling again with the same invoice_id retries.
 // Required secret: ANTHROPIC_API_KEY (supabase secrets set ANTHROPIC_API_KEY=...).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import Anthropic from 'npm:@anthropic-ai/sdk'
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64'
-import { admin, CORS, dbError, env, fail, HttpError, json, readBody, requireUser } from '../_shared/core.ts'
+import { admin, CORS, dbError, env, fail, HttpError, json, readBody, releaseSpend, requireUser, type SpendReleaseResult } from '../_shared/core.ts'
 
 const RIF_RE = /^[JGVEPC]-\d{8}-\d$/
 const BUCKET = 'invoices'
@@ -199,6 +206,18 @@ function parseVerdict(raw: unknown): Verdict {
   return o
 }
 
+type ReleaseInfo = SpendReleaseResult | { status: 'pending'; error: string; message: string }
+
+/** A release failure never loses the verdict: report it as pending so the caller can retry. */
+async function tryRelease(invoiceId: string): Promise<ReleaseInfo> {
+  try {
+    return await releaseSpend(invoiceId)
+  } catch (e) {
+    if (e instanceof HttpError) return { status: 'pending', error: e.code, message: e.message }
+    throw e
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
@@ -213,10 +232,6 @@ Deno.serve(async (req) => {
     if (typeof invoiceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(invoiceId)) {
       throw new HttpError(400, 'invalid_body', 'invoice_id inválido')
     }
-    if (typeof originPath !== 'string' || typeof destPath !== 'string' || !originPath || !destPath) {
-      throw new HttpError(400, 'invalid_body', 'Sube los dos documentos')
-    }
-    if (originPath === destPath) throw new HttpError(400, 'invalid_body', 'Los dos documentos deben ser distintos')
 
     const { data: foundation, error: fErr } = await admin
       .from('foundations')
@@ -225,6 +240,26 @@ Deno.serve(async (req) => {
       .maybeSingle()
     if (fErr) throw dbError(fErr)
     if (!foundation) throw new HttpError(404, 'foundation_not_found', 'Fundación no encontrada')
+
+    const { data: invoice, error: iErr } = await admin
+      .from('invoices')
+      .select('id, foundation_id, status, agent_checks, review_note')
+      .eq('id', invoiceId)
+      .maybeSingle()
+    if (iErr) throw dbError(iErr)
+    if (!invoice || invoice.foundation_id !== foundation.id) throw new HttpError(404, 'invoice_not_found', 'Factura no encontrada')
+
+    // Retry of a verified invoice whose release did not complete: no documents, no model call.
+    if (invoice.status === 'verified') {
+      const release = await tryRelease(invoice.id)
+      return json({ status: 'verified', checks: invoice.agent_checks, review_note: invoice.review_note ?? '', release })
+    }
+    if (invoice.status !== 'in_review') throw new HttpError(409, 'invoice_not_pending', 'La factura ya fue resuelta')
+
+    if (typeof originPath !== 'string' || typeof destPath !== 'string' || !originPath || !destPath) {
+      throw new HttpError(400, 'invalid_body', 'Sube los dos documentos')
+    }
+    if (originPath === destPath) throw new HttpError(400, 'invalid_body', 'Los dos documentos deben ser distintos')
     if (foundation.status !== 'active') throw new HttpError(403, 'foundation_suspended', 'Fundación suspendida')
 
     const prefix = `${foundation.id}/`
@@ -234,18 +269,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { data: invoice, error: iErr } = await admin
-      .from('invoices')
-      .select('id, foundation_id, status')
-      .eq('id', invoiceId)
-      .maybeSingle()
-    if (iErr) throw dbError(iErr)
-    if (!invoice || invoice.foundation_id !== foundation.id) throw new HttpError(404, 'invoice_not_found', 'Factura no encontrada')
-    if (invoice.status !== 'in_review') throw new HttpError(409, 'invoice_not_pending', 'La factura ya fue resuelta')
+    // Targeted tranches -> in_review BEFORE the model call (idempotent; a model failure leaves them in review).
+    const { error: subErr } = await admin.rpc('submit_spend_for_review', {
+      p_invoice_id: invoice.id,
+      p_foundation_id: foundation.id,
+    })
+    if (subErr) throw dbError(subErr)
 
     const [origin, destination] = await Promise.all([loadDoc(originPath), loadDoc(destPath)])
     const verdict = await askModel(origin, destination, { name: foundation.name, rif: foundation.rif })
-
     // --- Deterministic DB-side checks (a-c), independent of the model ---------------------------
     const destRif = verdict.destination.business_rif.trim().toUpperCase()
     const destAccount = digits(verdict.destination.account_number)
@@ -298,8 +330,10 @@ Deno.serve(async (req) => {
       ? 'Gasto verificado: cuenta de origen y negocio de destino confirmados.'
       : `Gasto rechazado: ${failed.map((c) => c.label).join('; ')}.`
 
-    const { error: applyErr } = await admin.rpc('apply_spend_verdict', {
+    // Ownership-guarded verdict; a rejection also freezes, breaks and refunds in the same transaction.
+    const { error: applyErr } = await admin.rpc('resolve_spend_verdict', {
       p_invoice_id: invoice.id,
+      p_foundation_id: foundation.id,
       p_status: status,
       p_checks: checks,
       p_note: note,
@@ -309,7 +343,19 @@ Deno.serve(async (req) => {
     })
     if (applyErr) throw dbError(applyErr)
 
-    return json({ status, checks, review_note: note })
+    if (status === 'verified') {
+      const release = await tryRelease(invoice.id)
+      return json({ status, checks, review_note: note, release })
+    }
+
+    const { data: refunds, error: rErr } = await admin.from('refunds').select('amount').eq('invoice_id', invoice.id)
+    if (rErr) throw dbError(rErr)
+    const refund = {
+      refunds: refunds?.length ?? 0,
+      refunded_usd: (refunds ?? []).reduce((sum, r) => sum + Math.round(Number(r.amount) * 100), 0) / 100,
+      foundation_status: 'frozen',
+    }
+    return json({ status, checks, review_note: note, refund })
   } catch (e) {
     return fail(e)
   }

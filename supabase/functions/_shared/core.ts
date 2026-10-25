@@ -76,6 +76,7 @@ const DB_ERRORS: Record<string, [number, string, string]> = {
   release_hash_mismatch: [409, 'release_hash_mismatch', 'El hash de liberación no coincide'],
   invoice_not_found: [404, 'invoice_not_found', 'Factura no encontrada'],
   invoice_not_pending: [409, 'invoice_not_pending', 'La factura ya fue resuelta'],
+  donation_refunded: [409, 'donation_refunded', 'La donación ya fue reembolsada'],
   invalid_verdict: [500, 'internal_error', 'Error interno del servidor'],
 }
 
@@ -203,7 +204,9 @@ export async function releaseInitial(donationId: string): Promise<ReleaseResult>
   if (!donation) throw new HttpError(404, 'donation_not_found', 'Donación no encontrada')
 
   const f = donation.foundation
-  const pct = Number(f.payout_percentage)
+  // The percentage fixed when the donation was made (tranche 1 amount); the foundation's CURRENT payout
+  // may differ if its reputation changed since. Legacy rows without initial_pct fall back to the current one.
+  const pct = Number(donation.initial_pct ?? f.payout_percentage)
   const releasedUsd = round2((Number(donation.total_amount) * pct) / 100)
 
   if (Number(donation.amount_released) > 0) {
@@ -212,7 +215,8 @@ export async function releaseInitial(donationId: string): Promise<ReleaseResult>
   if (donation.status !== 'in_escrow') {
     throw new HttpError(409, 'invalid_status', `Estado inválido: ${donation.status}`)
   }
-  if (f.status === 'suspended') throw new HttpError(403, 'foundation_suspended', 'Fundación suspendida')
+  // `frozen` is the only blocked value the table allows (never 'suspended'); `pending` has not been approved yet.
+  if (f.status !== 'active') throw new HttpError(403, 'foundation_suspended', 'Fundación suspendida')
 
   let txHash: string | null = donation.release_tx_hash
 
@@ -298,4 +302,119 @@ export async function releaseInitial(donationId: string): Promise<ReleaseResult>
   if (finErr) throw dbError(finErr)
 
   return { tx_hash: txHash as string, released: releasedUsd, payout_percentage: pct }
+}
+
+export interface SpendReleaseResult {
+  /** `released`: tranches paid (or already paid); `none`: the invoice had no tranche to release. */
+  status: 'released' | 'none'
+  tx_hash?: string
+  released_count: number
+  released_usd: number
+}
+
+const sumCents = (rows: { amount: number | string }[]) => rows.reduce((s, r) => s + Math.round(Number(r.amount) * 100), 0)
+
+/**
+ * Releases the tranches linked to a VERIFIED invoice (submit_spend_for_review froze that set as `in_review`)
+ * with ONE transfer from custody to the foundation wallet. Same pattern as releaseInitial:
+ * claim -> send -> persist hash -> best-effort receipt -> finalize (record_spend_release).
+ * Every step is retryable: a retry after a persisted hash only finalizes; it never sends again.
+ * A send failure (e.g. escrow without ETH) leaves invoice = verified and tranches = in_review: call again later.
+ */
+export async function releaseSpend(invoiceId: string): Promise<SpendReleaseResult> {
+  const { data: invoice, error } = await admin
+    .from('invoices')
+    .select('id, foundation_id, status, release_tx_hash, foundation:foundations(wallet_address)')
+    .eq('id', invoiceId)
+    .maybeSingle()
+  if (error) throw dbError(error)
+  if (!invoice) throw new HttpError(404, 'invoice_not_found', 'Factura no encontrada')
+  if (invoice.status !== 'verified') throw new HttpError(409, 'invoice_not_verified', 'La factura no está verificada')
+
+  const { data: pending, error: pErr } = await admin
+    .from('tranches')
+    .select('amount')
+    .eq('invoice_id', invoiceId)
+    .eq('state', 'in_review')
+  if (pErr) throw dbError(pErr)
+
+  let txHash: string | null = invoice.release_tx_hash
+  if (!pending?.length) {
+    if (!txHash) return { status: 'none', released_count: 0, released_usd: 0 }
+    // Already finalized (or the tranches were broken by a later freeze): report what was released.
+    const { data: done } = await admin.from('tranches').select('amount').eq('invoice_id', invoiceId).eq('state', 'released')
+    return { status: 'released', tx_hash: txHash, released_count: done?.length ?? 0, released_usd: sumCents(done ?? []) / 100 }
+  }
+
+  if (!txHash) {
+    // Claim: only one caller can hold a fresh claim.
+    const staleBefore = new Date(Date.now() - CLAIM_TTL_MS).toISOString()
+    const { data: claimed, error: claimErr } = await admin
+      .from('invoices')
+      .update({ release_claimed_at: new Date().toISOString() })
+      .eq('id', invoiceId)
+      .is('release_tx_hash', null)
+      .or(`release_claimed_at.is.null,release_claimed_at.lt.${staleBefore}`)
+      .select('id')
+      .maybeSingle()
+    if (claimErr) throw dbError(claimErr)
+    if (!claimed) {
+      const { data: current } = await admin.from('invoices').select('release_tx_hash').eq('id', invoiceId).maybeSingle()
+      if (current?.release_tx_hash) throw new HttpError(409, 'already_released', 'Ya se envió la liberación')
+      throw new HttpError(409, 'release_in_progress', 'La liberación ya está en curso')
+    }
+
+    // Send. A failure before a hash exists is safe to compensate; after a hash exists, never.
+    const releaseWei = BigInt(sumCents(pending)) * 10_000_000_000n
+    const to = (invoice.foundation as { wallet_address: string } | null)?.wallet_address
+    if (!to) throw new HttpError(500, 'internal_error', 'Error interno del servidor')
+    try {
+      const { client } = escrowWallet()
+      txHash = await client.sendTransaction({ to: to as `0x${string}`, value: releaseWei })
+    } catch (e) {
+      console.error('spend release send failed', e)
+      await admin.from('invoices').update({ release_claimed_at: null }).eq('id', invoiceId).is('release_tx_hash', null)
+      throw new HttpError(502, 'chain_error', 'No se pudo enviar la liberación on-chain')
+    }
+
+    // Persist the hash with a few retries: losing it would allow a double send after the claim expires.
+    let persistErr: { message: string } | null = null
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const { error: err } = await admin
+        .from('invoices')
+        .update({ release_tx_hash: txHash })
+        .eq('id', invoiceId)
+        .is('release_tx_hash', null)
+      persistErr = err
+      if (!err) break
+      console.error('spend release hash NOT persisted', { invoiceId, txHash, attempt, err })
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 300 * attempt))
+    }
+    if (persistErr) {
+      throw new HttpError(500, 'persist_failed', 'La liberación se envió pero no se pudo registrar el hash')
+    }
+  }
+
+  // Best effort on timeout; a confirmed revert means nothing was sent: free the invoice for a clean retry.
+  const receipt = await publicClient
+    .waitForTransactionReceipt({ hash: txHash as `0x${string}`, timeout: 60_000 })
+    .catch((e) => {
+      console.warn('spend receipt wait skipped', e instanceof Error ? e.message : e)
+      return null
+    })
+  if (receipt && receipt.status === 'reverted') {
+    console.error('spend release tx reverted', { invoiceId, txHash })
+    const { error: clearErr } = await admin
+      .from('invoices')
+      .update({ release_tx_hash: null, release_claimed_at: null })
+      .eq('id', invoiceId)
+      .eq('release_tx_hash', txHash)
+    if (clearErr) console.error('could not clear reverted spend release', { invoiceId, clearErr })
+    throw new HttpError(502, 'chain_reverted', 'La transacción de liberación fue revertida on-chain')
+  }
+
+  const { data: fin, error: finErr } = await admin.rpc('record_spend_release', { p_invoice_id: invoiceId, p_tx_hash: txHash })
+  if (finErr) throw dbError(finErr)
+  const summary = fin as { released_count: number; released_usd: number }
+  return { status: 'released', tx_hash: txHash as string, released_count: summary.released_count, released_usd: Number(summary.released_usd) }
 }
