@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Routes, Route, useLocation } from 'react-router-dom'
 import RoleGuard from './components/RoleGuard'
+import ComoFunciona from './pages/ComoFunciona'
 import ConsolaAuditor from './pages/ConsolaAuditor'
 import Explorar from './pages/Explorar'
 import Facturas from './pages/Facturas'
@@ -44,6 +45,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/explorar" element={<Explorar />} />
+        <Route path="/como-funciona" element={<ComoFunciona />} />
         <Route path="/fundacion/:id" element={<Fundacion />} />
         <Route path="/mis-rastros" element={<MisRastros />} />
         <Route path="/mis-rastros/reembolso/:donationId" element={<Reembolso />} />
