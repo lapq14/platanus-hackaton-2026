@@ -1,53 +1,115 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Lock, Percent } from 'lucide-react'
-import { useFoundations } from '../hooks/useFoundations'
-import ReputationBadge from '../components/ReputationBadge'
+import CatalogSection from '../components/CatalogSection'
+import DonorHeader from '../components/DonorHeader'
+import PageShell from '../components/PageShell'
 
-export default function Home() {
-  const { data, loading, error } = useFoundations()
+/**
+ * Intro hero. The choreography lives entirely in CSS (src/index.css): timings, geometry, font
+ * (Bricolage Grotesque 800), letter-spacing and line-height are FINAL: do not change them.
+ * Only this component re-renders when the animation is replayed.
+ */
+function Hero() {
+  const [runKey, setRunKey] = useState(0)
+  const [fontsReady, setFontsReady] = useState(false)
+
+  // Wait for the fonts so the ring lands exactly on the "o" (no font swap jump).
+  useEffect(() => {
+    let cancelled = false
+    void document.fonts.ready.then(() => {
+      if (!cancelled) setFontsReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const replay = () => {
+    setFontsReady(false)
+    setTimeout(() => setFontsReady(true), 40)
+    setRunKey((k) => k + 1)
+  }
+
+  if (!fontsReady) return <section style={{ minHeight: '583px' }} aria-hidden="true" />
 
   return (
-    <div className="space-y-8">
-      <section className="rounded-2xl bg-gradient-to-br from-brand-700 to-brand-500 p-8 text-white">
-        <h1 className="text-3xl font-bold">Dona con trazabilidad real</h1>
-        <p className="mt-2 max-w-2xl text-brand-50">
-          Tu donación queda en custodia. Cada fundación recibe un tramo según su reputación y
-          desbloquea el resto solo cuando demuestra, factura en mano, en qué lo gastó.
-        </p>
-      </section>
-
-      <section>
-        <h2 className="mb-4 text-xl font-semibold">Fundaciones</h2>
-        {loading && <p className="text-slate-500">Cargando…</p>}
-        {error && <p className="text-red-600">Error: {error}</p>}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {data.map((f) => (
-            <Link
-              key={f.id}
-              to={`/fundacion/${f.id}`}
-              className="group rounded-xl border border-slate-200 bg-white p-5 transition hover:border-brand-500 hover:shadow-md"
-            >
-              <div className="flex items-start gap-3">
-                {f.logo_url && (
-                  <img src={f.logo_url} alt="" className="h-12 w-12 rounded-lg bg-slate-100" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-semibold group-hover:text-brand-700">{f.name}</h3>
-                  <p className="text-xs text-slate-500">{f.category}</p>
-                </div>
-              </div>
-              <p className="mt-3 line-clamp-2 text-sm text-slate-600">{f.description}</p>
-              <div className="mt-4 flex items-center justify-between">
-                <ReputationBadge foundation={f} />
-                <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-                  <Percent size={12} /> {f.payout_percentage}% inicial
-                  <Lock size={12} className="ml-1" /> {100 - f.payout_percentage}% custodia
+    <section
+      key={runKey}
+      style={{ minHeight: '583px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0 56px', position: 'relative', overflow: 'hidden' }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '48px' }}>
+        <div className="grow">
+          <h1
+            className="rise"
+            style={{ margin: 0, fontSize: 'clamp(56px, 9vw, 132px)', lineHeight: 0.92, fontWeight: 800, letterSpacing: '-0.04em', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}
+          >
+            <span className="gone" style={{ display: 'block', whiteSpace: 'nowrap' }}>
+              Cada aporte
+            </span>
+            <span style={{ display: 'block', whiteSpace: 'nowrap' }}>
+              <span className="gone">deja </span>
+              <span className="word" style={{ color: '#B4235A' }}>
+                rastr
+                <span style={{ position: 'relative', display: 'inline-block' }}>
+                  <span className="o-letter">o</span>
+                  <svg
+                    className="mark"
+                    viewBox="-1200 -1200 2400 2400"
+                    aria-hidden="true"
+                    style={{ position: 'absolute', left: '0.3285em', top: '0.526em', width: '2.4em', height: '2.4em', transform: 'translate(-50%, -50%)', overflow: 'visible' }}
+                  >
+                    <line className="ln ln1" pathLength="1" x1="230.6" y1="-140.5" x2="453.7" y2="-276.4" stroke="#1B1530" strokeWidth="49.8" strokeLinecap="round" />
+                    <line className="ln ln2" pathLength="1" x1="619.3" y1="-349.9" x2="817.6" y2="-408.5" stroke="#1B1530" strokeWidth="49.8" strokeLinecap="round" />
+                    <line className="ln3" x1="940.0" y1="-503.2" x2="1047.9" y2="-683.0" stroke="#8A8296" strokeWidth="49.8" strokeDasharray="50 58" strokeLinecap="round" />
+                    <circle className="ring" pathLength="1" transform="rotate(-90)" cx="0" cy="0" r="205.0" fill="none" stroke="#B4235A" strokeWidth="130" />
+                    <circle className="pop core" cx="0" cy="0" r="66.5" fill="#B4235A" />
+                    <circle className="pop n1" cx="531.7" cy="-324.0" r="91.4" fill="#1A7F52" />
+                    <circle className="pop n2" cx="897.2" cy="-432.0" r="83.1" fill="#E8A317" />
+                    <circle className="pop n3" cx="1096.6" cy="-764.3" r="56.5" fill="none" stroke="#8A8296" strokeWidth="36.6" strokeDasharray="28 25" />
+                  </svg>
                 </span>
-              </div>
-            </Link>
-          ))}
+              </span>
+              <span className="gone">.</span>
+            </span>
+          </h1>
         </div>
-      </section>
-    </div>
+        <div className="after" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '22px', textAlign: 'center', padding: '0 24px' }}>
+          <p style={{ margin: 0, fontSize: 'clamp(16px, 1.6vw, 20px)', lineHeight: 1.5, color: '#5A5468', maxWidth: '520px' }}>
+            Donaciones en custodia que se liberan por tramos, sellados con facturas reales y registrados en cadena.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'center' }}>
+            <a
+              href="#fundaciones"
+              style={{ minHeight: '52px', padding: '0 26px', borderRadius: '12px', background: '#B4235A', color: '#FFFFFF', fontWeight: 700, fontSize: '16px', display: 'flex', alignItems: 'center', textDecoration: 'none' }}
+            >
+              Ver fundaciones
+            </a>
+            <Link
+              to="/registro"
+              style={{ minHeight: '52px', padding: '0 26px', borderRadius: '12px', border: '1.5px solid #1B1530', color: '#1B1530', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', textDecoration: 'none' }}
+            >
+              Soy fundación
+            </Link>
+          </div>
+          <button
+            type="button"
+            onClick={replay}
+            style={{ minHeight: '44px', padding: '0 14px', border: 'none', background: 'transparent', color: '#5A5468', fontFamily: 'inherit', fontSize: '14px', textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            Ver la animación de nuevo
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export default function Home() {
+  return (
+    <PageShell minHeight={0}>
+      <DonorHeader active="home" />
+      <Hero />
+      <CatalogSection variant="home" />
+    </PageShell>
   )
 }

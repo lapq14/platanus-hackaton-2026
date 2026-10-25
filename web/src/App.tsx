@@ -1,23 +1,76 @@
-import { Routes, Route } from 'react-router-dom'
-import Layout from './components/Layout'
+import { useEffect } from 'react'
+import { Routes, Route, useLocation } from 'react-router-dom'
+import RoleGuard from './components/RoleGuard'
+import ConsolaAuditor from './pages/ConsolaAuditor'
+import Explorar from './pages/Explorar'
+import Facturas from './pages/Facturas'
+import Fundacion from './pages/Fundacion'
 import Home from './pages/Home'
-import FoundationDetail from './pages/FoundationDetail'
-import MyDonations from './pages/MyDonations'
-import Welcome from './pages/Welcome'
-import OrgRegister from './pages/OrgRegister'
-import OrgDashboard from './pages/OrgDashboard'
+import MisRastros from './pages/MisRastros'
+import PanelFundacion from './pages/PanelFundacion'
+import Reembolso from './pages/Reembolso'
+import Registro from './pages/Registro'
 
+/** Scrolls to the top on navigation, or to the `#hash` element when there is one (e.g. /panel#sellar). */
+function ScrollManager() {
+  const { pathname, hash } = useLocation()
+  useEffect(() => {
+    if (!hash) {
+      window.scrollTo(0, 0)
+      return
+    }
+    // The target may render after data loads: retry briefly.
+    let tries = 0
+    const t = setInterval(() => {
+      const el = document.getElementById(hash.slice(1))
+      if (el || ++tries > 20) {
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        clearInterval(t)
+      }
+    }, 100)
+    return () => clearInterval(t)
+  }, [pathname, hash])
+  return null
+}
+
+// Every page brings its own header, so there is no shared layout route.
 export default function App() {
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<Welcome />} />
-        <Route path="/fundaciones" element={<Home />} />
-        <Route path="/organizacion" element={<OrgDashboard />} />
-        <Route path="/organizacion/registro" element={<OrgRegister />} />
-        <Route path="/fundacion/:id" element={<FoundationDetail />} />
-        <Route path="/mis-donaciones" element={<MyDonations />} />
-      </Route>
-    </Routes>
+    <>
+      <ScrollManager />
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/explorar" element={<Explorar />} />
+        <Route path="/fundacion/:id" element={<Fundacion />} />
+        <Route path="/mis-rastros" element={<MisRastros />} />
+        <Route path="/mis-rastros/reembolso/:donationId" element={<Reembolso />} />
+        <Route
+          path="/panel"
+          element={
+            <RoleGuard role="ong">
+              <PanelFundacion />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/panel/facturas"
+          element={
+            <RoleGuard role="ong">
+              <Facturas />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/auditor"
+          element={
+            <RoleGuard role="auditor">
+              <ConsolaAuditor />
+            </RoleGuard>
+          }
+        />
+        <Route path="/registro" element={<Registro />} />
+        <Route path="*" element={<Home />} />
+      </Routes>
+    </>
   )
 }

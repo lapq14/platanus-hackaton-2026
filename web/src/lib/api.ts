@@ -64,10 +64,25 @@ export const donate = (token: string, foundationId: string, amount: number) =>
 export const releaseInitial = (token: string, donationId: string) =>
   callFn<ReleaseInfo>('release-initial', token, { donation_id: donationId })
 
+export const listDonations = (token: string, scope: 'donor' | 'foundation') =>
+  callFn<{ donations: Donation[] }>('my-donations', token, { scope })
+
 export interface RegisterFoundationInput {
   name: string
   description?: string
   category?: string
+  rif?: string
+  country?: string
+  city?: string
+  official_email?: string
+  /** Payout wallet (defaults to the user's wallet when omitted). */
+  wallet_address?: string
+  logo_url?: string
+  instagram_url?: string
+  tiktok_url?: string
+  x_url?: string
+  legal_doc_path?: string
+  legal_doc_hash?: string
 }
 
 export const registerFoundation = (token: string, input: RegisterFoundationInput) =>
