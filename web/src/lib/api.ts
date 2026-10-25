@@ -1,5 +1,5 @@
 import { env } from './env'
-import type { Donation, Foundation, User } from '../types'
+import type { AgentCheck, Donation, Foundation, User } from '../types'
 
 /** Quick top-up amounts (USD) offered in the top-up modal. */
 export const TOPUP_PRESETS = [50, 100, 500] as const
@@ -87,3 +87,13 @@ export interface RegisterFoundationInput {
 
 export const registerFoundation = (token: string, input: RegisterFoundationInput) =>
   callFn<{ foundation: Foundation }>('register-foundation', token, input)
+
+export interface VerifySpendResult {
+  status: 'verified' | 'rejected'
+  checks: AgentCheck[]
+  review_note: string
+}
+
+/** Runs the AI + registry verification of the two spend documents (origin proof, destination business doc). */
+export const verifySpend = (token: string, invoiceId: string, originPath: string, destinationPath: string) =>
+  callFn<VerifySpendResult>('verify-spend', token, { invoice_id: invoiceId, origin_path: originPath, destination_path: destinationPath })

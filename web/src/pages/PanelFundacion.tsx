@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { usePrivy } from '@privy-io/react-auth'
+import AgentChecks from '../components/AgentChecks'
 import Dropzone from '../components/Dropzone'
 import FoundationHeader from '../components/FoundationHeader'
 import PageShell, { Notice } from '../components/PageShell'
@@ -12,6 +14,7 @@ import { LEVEL_MIN_REPUTATION, LEVEL_RELEASE, LEVEL_ROMAN, REP_PER_VERIFIED_INVO
 import { useFoundationInvoices } from '../hooks/useFoundationInvoices'
 import { useMyFoundation } from '../hooks/useMyFoundation'
 import { recordInvoiceHash } from '../lib/contract'
+import { ApiError, verifySpend, type VerifySpendResult } from '../lib/api'
 import { formatUSDT, formatUSDTCompact, RIF_RE, sha256Hex } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { BUCKETS, fileExtension, uploadFile } from '../lib/storage'
@@ -73,11 +76,48 @@ interface SealFormProps {
   onSent: () => void
 }
 
+/** Single-file picker for one of the two spend documents (origin proof / destination business doc). */
+function SpendDocField({ title, hint, file, onFile, onError }: { title: string; hint: string; file: File | null; onFile: (f: File | null) => void; onError: (m: string | null) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <span style={LABEL}>{title}</span>
+      {file ? (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          <FileChip file={file} onRemove={() => onFile(null)} />
+        </ul>
+      ) : (
+        <Dropzone
+          variant="box"
+          accept="application/pdf,image/jpeg,image/png"
+          icon="file"
+          title={title}
+          hint={hint}
+          onFiles={(incoming) => {
+            const f = incoming[0]
+            if (!ALLOWED.includes(f.type) || f.size > MAX_BYTES) {
+              onError(`"${f.name}" no es válido: usa PDF, JPG o PNG de hasta 10 MB.`)
+              return
+            }
+            onError(null)
+            onFile(f)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
 function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disabled, onSent }: SealFormProps) {
   const [files, setFiles] = useState<File[]>([])
   const [fileError, setFileError] = useState<string | null>(null)
-  const [step, setStep] = useState<'idle' | 'uploading' | 'chain'>('idle')
+  const [step, setStep] = useState<'idle' | 'uploading' | 'chain' | 'verifying'>('idle')
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const { getAccessToken } = usePrivy()
+  const [originFile, setOriginFile] = useState<File | null>(null)
+  const [destFile, setDestFile] = useState<File | null>(null)
+  // Invoice already inserted + spend docs uploaded: a failed verification can be retried without duplicating it.
+  const [saved, setSaved] = useState<{ invoiceId: string; originPath: string; destPath: string } | null>(null)
+  const [result, setResult] = useState<VerifySpendResult | null>(null)
 
   const schema = useMemo(
     () =>
@@ -121,20 +161,29 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
   }
 
   const onSubmit = async (values: FormValues) => {
-    if (files.length === 0) {
+    if (!saved && files.length === 0) {
       setFileError('Sube al menos un archivo de la factura.')
       return
     }
+    if (!saved && (!originFile || !destFile)) {
+      setFileError('Sube el comprobante de cuenta de origen y el documento del negocio.')
+      return
+    }
     setSubmitError(null)
+    setResult(null)
     setStep('uploading')
     try {
+      let target = saved
+      if (!target && originFile && destFile) {
       const hashes = await Promise.all(files.map(sha256Hex))
       const paths: string[] = []
       for (const file of files) {
         paths.push(await uploadFile(BUCKETS.invoices, `${foundation.id}/${crypto.randomUUID()}.${fileExtension(file)}`, file))
       }
       const fileHash = await combineHashes(hashes)
-      const { error } = await supabase.from('invoices').insert({
+      const originPath = await uploadFile(BUCKETS.invoices, `${foundation.id}/${crypto.randomUUID()}.${fileExtension(originFile)}`, originFile)
+      const destPath = await uploadFile(BUCKETS.invoices, `${foundation.id}/${crypto.randomUUID()}.${fileExtension(destFile)}`, destFile)
+      const { data: created, error } = await supabase.from('invoices').insert({
         foundation_id: foundation.id,
         number: nextInvoiceNumber,
         concept: values.concept.trim(),
@@ -146,25 +195,40 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
         file_hash: fileHash,
         file_hashes: hashes,
         status: 'in_review',
-      })
-      if (error) throw new Error(error.message)
+      }).select('id').single()
+      if (error || !created) throw new Error(error?.message ?? 'No pudimos guardar la factura.')
 
       setStep('chain')
       await recordInvoiceHash(foundation.id, fileHash as `0x${string}`) // TODO fase contrato: real on-chain call.
+      target = { invoiceId: created.id as string, originPath, destPath }
+      setSaved(target)
+      }
+      if (!target) return
+
+      setStep('verifying')
+      const token = await getAccessToken()
+      if (!token) throw new Error('Tu sesión expiró. Inicia sesión de nuevo.')
+      const verdict = await verifySpend(token, target.invoiceId, target.originPath, target.destPath)
+      setResult(verdict)
+      setSaved(null)
+      setOriginFile(null)
+      setDestFile(null)
       // TODO fase agente: mark the matching tranche(s) as in_review for the affected donations
       // (needs the service role; the audit agent / an Edge Function will do it when it picks the invoice up).
       reset({ rif: '', concept: '' })
       setFiles([])
       onSent()
     } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : 'No pudimos enviar la factura. Intenta de nuevo.')
+      const base = e instanceof Error ? e.message : 'No pudimos enviar la factura. Intenta de nuevo.'
+      setSubmitError(e instanceof ApiError ? `${base} Tu factura quedó en revisión; puedes reintentar la verificación.` : base)
     } finally {
       setStep('idle')
     }
   }
 
   const busy = step !== 'idle'
-  const label = step === 'uploading' ? 'Subiendo…' : step === 'chain' ? 'Registrando hash en cadena…' : 'Enviar a auditoría'
+  const label =
+    step === 'uploading' ? 'Subiendo…' : step === 'chain' ? 'Registrando hash en cadena…' : step === 'verifying' ? 'Verificando el gasto…' : saved ? 'Reintentar verificación' : 'Enviar a auditoría'
 
   return (
     <section
@@ -200,6 +264,12 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
               {fileError}
             </span>
           )}
+          {!saved && (
+            <>
+              <SpendDocField title="Comprobante de cuenta de origen" hint="Prueba de que la cuenta es de la fundación · PDF o foto" file={originFile} onFile={setOriginFile} onError={setFileError} />
+              <SpendDocField title="Documento con RIF y cuenta del negocio" hint="RIF y cuenta de destino del negocio · PDF o foto" file={destFile} onFile={setDestFile} onError={setFileError} />
+            </>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label htmlFor="rif" style={LABEL}>
               RIF del proveedor
@@ -227,6 +297,16 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
             <span role="alert" style={FIELD_ERROR}>
               {submitError}
             </span>
+          )}
+          {result && (
+            <div
+              role="status"
+              style={{ border: `1.5px solid ${result.status === 'verified' ? '#1A7F52' : '#B4235A'}`, background: result.status === 'verified' ? '#E6F4EC' : '#F8E9EF', borderRadius: '14px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}
+            >
+              <strong style={{ color: result.status === 'verified' ? '#135E3C' : '#8E1B47' }}>{result.status === 'verified' ? 'Gasto verificado' : 'Gasto rechazado'}</strong>
+              <span style={{ fontSize: '13px', color: '#5A5468' }}>{result.review_note}</span>
+              <AgentChecks checks={result.checks} />
+            </div>
           )}
           <button
             type="submit"

@@ -74,6 +74,9 @@ const DB_ERRORS: Record<string, [number, string, string]> = {
   foundation_suspended: [403, 'foundation_suspended', 'Fundación suspendida'],
   user_not_found: [404, 'user_not_synced', 'Usuario no sincronizado'],
   release_hash_mismatch: [409, 'release_hash_mismatch', 'El hash de liberación no coincide'],
+  invoice_not_found: [404, 'invoice_not_found', 'Factura no encontrada'],
+  invoice_not_pending: [409, 'invoice_not_pending', 'La factura ya fue resuelta'],
+  invalid_verdict: [500, 'internal_error', 'Error interno del servidor'],
 }
 
 /** Converts a Supabase/PostgREST error into an HttpError (known codes) or a generic 500. */
