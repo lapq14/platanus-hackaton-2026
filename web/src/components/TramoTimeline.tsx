@@ -1,6 +1,6 @@
 import type { TrancheState } from '../types'
-import { explorerTx } from '../lib/chain'
-import { formatUSDT, shortHash } from '../lib/format'
+import { formatUSDT } from '../lib/format'
+import TxLink from './TxLink'
 import TramoIcon from './TramoIcon'
 
 export interface TimelineStep {
@@ -37,14 +37,11 @@ export default function TramoTimeline({ steps }: { steps: TimelineStep[] }) {
               </div>
               <span style={{ fontSize: '14px', color: '#5A5468' }}>{step.description}</span>
               {step.hash && (
-                <a
-                  href={explorerTx(step.hash.value)}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <TxLink
+                  hash={step.hash.value}
+                  label={step.hash.prefix}
                   style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '13px', textDecoration: 'none' }}
-                >
-                  {step.hash.prefix} {shortHash(step.hash.value)} ↗
-                </a>
+                />
               )}
             </div>
           </div>

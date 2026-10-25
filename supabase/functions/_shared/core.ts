@@ -35,6 +35,43 @@ export const chain = defineChain({
 
 export const publicClient = createPublicClient({ chain, transport: http() })
 
+/**
+ * Chain mode. Simulated is the DEFAULT: releases skip the on-chain send and use a generated hash, so the whole
+ * flow works without ETH. Real Base Sepolia transactions are sent only when CHAIN_MODE === 'real'.
+ */
+export const isSimulated = () => Deno.env.get('CHAIN_MODE') !== 'real'
+
+/** Simulated hashes start with 0x + ASCII "simul". Mirrored by web/src/lib/simulated.ts. */
+export const SIMULATED_HASH_PREFIX = '0x73696d756c'
+
+export const isSimulatedHash = (hash: string) => hash.toLowerCase().startsWith(SIMULATED_HASH_PREFIX)
+
+/** 32-byte (0x + 64 hex) hash: the simulated marker followed by cryptographically random bytes. */
+function generateSimulatedHash(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(27))
+  const rest = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  return `${SIMULATED_HASH_PREFIX}${rest}`
+}
+
+/**
+ * Single send path for every platform -> foundation release. Real mode signs and broadcasts from the escrow wallet;
+ * simulated mode returns a generated hash without touching the key or the RPC.
+ */
+async function sendRelease(to: string, wei: bigint): Promise<string> {
+  if (isSimulated()) return generateSimulatedHash()
+  const { client } = escrowWallet()
+  return await client.sendTransaction({ to: to as `0x${string}`, value: wei })
+}
+
+/** Receipt wait: nothing to wait for on a simulated hash (it never reached a chain). */
+async function waitReceipt(hash: string, label: string) {
+  if (isSimulatedHash(hash)) return null
+  return await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}`, timeout: 60_000 }).catch((e) => {
+    console.warn(label, e instanceof Error ? e.message : e)
+    return null
+  })
+}
+
 /** Wallet de custodia: firma liberaciones y reembolsos. */
 export function escrowWallet() {
   const account = privateKeyToAccount(env('ESCROW_PRIVATE_KEY') as `0x${string}`)
@@ -245,8 +282,7 @@ export async function releaseInitial(donationId: string): Promise<ReleaseResult>
     // Send. A failure before a hash exists is safe to compensate; after a hash exists, never.
     const releaseWei = (usdToWei(Number(donation.total_amount)) * BigInt(pct)) / 100n
     try {
-      const { client } = escrowWallet()
-      txHash = await client.sendTransaction({ to: f.wallet_address as `0x${string}`, value: releaseWei })
+      txHash = await sendRelease(f.wallet_address, releaseWei)
     } catch (e) {
       console.error('release send failed', e)
       await admin
@@ -277,12 +313,7 @@ export async function releaseInitial(donationId: string): Promise<ReleaseResult>
 
   // Best effort on timeout: the tx is already broadcast, so it must not block finalizing.
   // A confirmed revert, however, means nothing was sent: free the donation for a clean retry.
-  const receipt = await publicClient
-    .waitForTransactionReceipt({ hash: txHash as `0x${string}`, timeout: 60_000 })
-    .catch((e) => {
-      console.warn('receipt wait skipped', e instanceof Error ? e.message : e)
-      return null
-    })
+  const receipt = await waitReceipt(txHash as string, 'receipt wait skipped')
   if (receipt && receipt.status === 'reverted') {
     console.error('release tx reverted', { donationId, txHash })
     const { error: clearErr } = await admin
@@ -369,8 +400,7 @@ export async function releaseSpend(invoiceId: string): Promise<SpendReleaseResul
     const to = (invoice.foundation as { wallet_address: string } | null)?.wallet_address
     if (!to) throw new HttpError(500, 'internal_error', 'Error interno del servidor')
     try {
-      const { client } = escrowWallet()
-      txHash = await client.sendTransaction({ to: to as `0x${string}`, value: releaseWei })
+      txHash = await sendRelease(to, releaseWei)
     } catch (e) {
       console.error('spend release send failed', e)
       await admin.from('invoices').update({ release_claimed_at: null }).eq('id', invoiceId).is('release_tx_hash', null)
@@ -396,12 +426,7 @@ export async function releaseSpend(invoiceId: string): Promise<SpendReleaseResul
   }
 
   // Best effort on timeout; a confirmed revert means nothing was sent: free the invoice for a clean retry.
-  const receipt = await publicClient
-    .waitForTransactionReceipt({ hash: txHash as `0x${string}`, timeout: 60_000 })
-    .catch((e) => {
-      console.warn('spend receipt wait skipped', e instanceof Error ? e.message : e)
-      return null
-    })
+  const receipt = await waitReceipt(txHash as string, 'spend receipt wait skipped')
   if (receipt && receipt.status === 'reverted') {
     console.error('spend release tx reverted', { invoiceId, txHash })
     const { error: clearErr } = await admin

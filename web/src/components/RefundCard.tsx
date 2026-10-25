@@ -1,9 +1,9 @@
 import type { CSSProperties } from 'react'
 import { LEVEL_RELEASE, toLevel } from '../config/levels'
-import { explorerTx } from '../lib/chain'
-import { formatUSDT, maskEmail, shortHash } from '../lib/format'
+import { formatUSDT, maskEmail } from '../lib/format'
 import type { Donation, Refund } from '../types'
 import TramoIcon from './TramoIcon'
+import TxLink from './TxLink'
 
 const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
 const ROW: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid #ECE7F0', fontSize: '15px' }
@@ -69,9 +69,7 @@ export default function RefundCard({ donation, refund, email }: RefundCardProps)
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
             <strong style={{ fontSize: '16px' }}>{refund.tx_hash ? 'Depositado en tu billetera' : 'Devuelto a tu saldo'}</strong>
             {refund.tx_hash && (
-              <a href={explorerTx(refund.tx_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, fontSize: '13px', textDecoration: 'none' }}>
-                tx {shortHash(refund.tx_hash)} ↗
-              </a>
+              <TxLink hash={refund.tx_hash} label="tx" style={{ ...MONO, fontSize: '13px', textDecoration: 'none' }} />
             )}
           </div>
           <span style={{ ...MONO, fontSize: '26px', fontWeight: 600, color: '#1A7F52' }}>+{formatUSDT(refund.amount)}</span>

@@ -10,13 +10,13 @@ import FoundationHeader from '../components/FoundationHeader'
 import PageShell, { Notice } from '../components/PageShell'
 import StatCard from '../components/StatCard'
 import StatusBadge from '../components/StatusBadge'
+import TxLink from '../components/TxLink'
 import { LEVEL_MIN_REPUTATION, LEVEL_RELEASE, LEVEL_ROMAN, REP_PER_VERIFIED_INVOICE, toLevel } from '../config/levels'
 import { useFoundationInvoices } from '../hooks/useFoundationInvoices'
 import { useMyFoundation } from '../hooks/useMyFoundation'
 import { recordInvoiceHash } from '../lib/contract'
 import { ApiError, verifySpend, type VerifySpendResult } from '../lib/api'
-import { explorerTx } from '../lib/chain'
-import { formatUSDT, formatUSDTCompact, RIF_RE, sha256Hex, shortHash } from '../lib/format'
+import { formatUSDT, formatUSDTCompact, RIF_RE, sha256Hex } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { BUCKETS, fileExtension, uploadFile } from '../lib/storage'
 import type { Foundation } from '../types'
@@ -315,9 +315,7 @@ function SealForm({ foundation, nextTotal, nextIndex, nextInvoiceNumber, disable
                 <span style={{ fontSize: '13px', fontWeight: 600 }}>
                   Se liberaron {formatUSDT(result.release.released_usd)} ({result.release.released_count} {result.release.released_count === 1 ? 'tramo' : 'tramos'}).{' '}
                   {result.release.tx_hash && (
-                    <a href={explorerTx(result.release.tx_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, textDecoration: 'none' }}>
-                      tx {shortHash(result.release.tx_hash)} ↗
-                    </a>
+                    <TxLink hash={result.release.tx_hash} label="tx" style={{ ...MONO, textDecoration: 'none' }} />
                   )}
                 </span>
               )}
@@ -455,9 +453,7 @@ export default function PanelFundacion() {
                       <td style={{ padding: '14px 16px' }}>
                         <StatusBadge status={inv.status} size="sm" label={inv.status === 'verified' ? 'Sellada' : undefined} />
                         {inv.release_tx_hash && (
-                          <a href={explorerTx(inv.release_tx_hash)} target="_blank" rel="noopener noreferrer" style={{ ...MONO, display: 'block', marginTop: '4px', fontSize: '12px', textDecoration: 'none' }}>
-                            tx {shortHash(inv.release_tx_hash)} ↗
-                          </a>
+                          <TxLink hash={inv.release_tx_hash} label="tx" style={{ ...MONO, display: 'block', marginTop: '4px', fontSize: '12px', textDecoration: 'none' }} />
                         )}
                       </td>
                     </tr>
