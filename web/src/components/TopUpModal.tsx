@@ -40,7 +40,7 @@ export default function TopUpModal({ onClose }: { onClose: () => void }) {
     <Modal title="Recargar billetera" onClose={onClose} maxWidth={420}>
       <p style={{ margin: 0, fontSize: '14px', color: '#5A5468' }}>
         Saldo simulado para la demo. Saldo actual:{' '}
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#1B1530' }}>{balance === null ? '$—' : formatUSDT(balance)}</span>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#1B1530' }}>{balance === null ? '— USDT' : formatUSDT(balance)}</span>
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
         {TOPUP_PRESETS.map((amount) => (
@@ -61,7 +61,7 @@ export default function TopUpModal({ onClose }: { onClose: () => void }) {
               cursor: pending !== null ? 'wait' : 'pointer',
             }}
           >
-            {pending === amount ? '…' : `+$${amount}`}
+            {pending === amount ? '…' : `+${amount} USDT`}
           </button>
         ))}
       </div>

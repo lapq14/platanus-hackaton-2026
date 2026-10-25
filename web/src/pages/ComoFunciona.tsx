@@ -9,7 +9,7 @@ const MONO: CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
 const EXAMPLE_AMOUNT = 50
 const EXAMPLE_LEVEL = 3 as const
 
-/** Illustrative "how a $50 donation travels" card. Amounts come from LEVEL_RELEASE so they always match the real rule. */
+/** Illustrative "how a 50 USDT donation travels" card. Amounts come from LEVEL_RELEASE so they always match the real rule. */
 function TravelCard() {
   const pct = LEVEL_RELEASE[EXAMPLE_LEVEL]
   const amounts = splitDonation(EXAMPLE_AMOUNT, EXAMPLE_LEVEL)
@@ -22,7 +22,7 @@ function TravelCard() {
   return (
     <div style={{ flex: '1 1 460px', background: '#FFFFFF', border: '1.5px solid #1B1530', borderRadius: '20px', padding: '28px', display: 'flex', flexDirection: 'column', gap: '22px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '8px' }}>
-        <span style={{ fontSize: '17px', fontWeight: 700 }}>Así viaja un aporte de ${EXAMPLE_AMOUNT}</span>
+        <span style={{ fontSize: '17px', fontWeight: 700 }}>Así viaja un aporte de {EXAMPLE_AMOUNT} USDT</span>
         <span style={{ ...MONO, fontSize: '12px', color: '#5A5468' }}>
           NIVEL {EXAMPLE_LEVEL} · {pct}% INICIAL
         </span>

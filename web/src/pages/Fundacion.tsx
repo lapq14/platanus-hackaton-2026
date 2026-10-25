@@ -232,7 +232,7 @@ export default function Fundacion() {
             ) : (
               <>
                 <span style={{ ...MONO, fontSize: '12px', letterSpacing: '1.2px', color: '#5A5468' }}>
-                  MONTO · TU SALDO {balance === null ? '$—' : formatUSDT(balance)}
+                  MONTO · TU SALDO {balance === null ? '— USDT' : formatUSDT(balance)}
                 </span>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' }}>
                   {PRESETS.map(amountButton)}
@@ -267,7 +267,7 @@ export default function Fundacion() {
                   </label>
                 )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <span style={{ ...MONO, fontSize: '12px', letterSpacing: '1.2px', color: '#5A5468' }}>ASÍ SE MOVERÁN TUS ${amountValid ? amount : 0}</span>
+                  <span style={{ ...MONO, fontSize: '12px', letterSpacing: '1.2px', color: '#5A5468' }}>ASÍ SE MOVERÁN TUS {amountValid ? amount : 0} USDT</span>
                   <div style={{ display: 'flex', height: '44px', border: '1.5px solid #1B1530', borderRadius: '10px', overflow: 'hidden', ...MONO, fontSize: '12px' }}>
                     <div style={{ flex: pct, background: '#1A7F52', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600 }}>{pct}%</div>
                     {Array.from({ length: trancheCount - 1 }, (_, k) => k + 2).map((n) => (

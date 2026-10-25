@@ -308,7 +308,7 @@ function SealForm({ foundation, available, disabled, onSent }: SealFormProps) {
               <label htmlFor="monto" style={LABEL}>
                 Monto
               </label>
-              <input id="monto" type="number" step="0.01" inputMode="decimal" placeholder="$0.00" {...register('amount', { valueAsNumber: true })} style={{ ...INPUT, ...MONO }} />
+              <input id="monto" type="number" step="0.01" inputMode="decimal" placeholder="0.00 USDT" {...register('amount', { valueAsNumber: true })} style={{ ...INPUT, ...MONO }} />
               {errors.amount && <span style={FIELD_ERROR}>{errors.amount.message}</span>}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>

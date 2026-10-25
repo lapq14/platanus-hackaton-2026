@@ -14,7 +14,7 @@ interface RefundCardProps {
   email: string | null
 }
 
-/** "El rastro de tus $30.00": what was delivered, what came back and the on-chain proof. */
+/** "El rastro de tus 30.00 USDT": what was delivered, what came back and the on-chain proof. */
 export default function RefundCard({ donation, refund, email }: RefundCardProps) {
   const tranches = donation.tranches ?? []
   const delivered = tranches.filter((t) => t.state === 'released')

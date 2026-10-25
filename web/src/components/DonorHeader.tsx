@@ -14,7 +14,7 @@ const LINK_ACTIVE: CSSProperties = { ...LINK, background: '#1B1530', color: '#F6
 
 interface ViewProps {
   active: Active
-  /** Formatted balance (`$120.00`), `$—` while loading, or null when logged out. */
+  /** Formatted balance (`120.00 USDT`), `— USDT` while loading, or null when logged out. */
   balance: string | null
   initial: string
   foundationHref: string
@@ -152,7 +152,7 @@ export default function DonorHeader({ active }: { active: Active }) {
     <>
       <DonorHeaderView
         active={active}
-        balance={authenticated ? (balance === null ? '$—' : formatUSDT(balance)) : null}
+        balance={authenticated ? (balance === null ? '— USDT' : formatUSDT(balance)) : null}
         initial={name.trim().charAt(0).toUpperCase() || 'D'}
         foundationHref={foundationHref}
         onLogin={login}

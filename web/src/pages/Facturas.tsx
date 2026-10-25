@@ -12,7 +12,7 @@ import StatusBadge from '../components/StatusBadge'
 import { useOwnInvoices } from '../hooks/useOwnerData'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useMyFoundation } from '../hooks/useMyFoundation'
-import { formatDate, formatTokens, formatUSDT, shortHash } from '../lib/format'
+import { formatDate, formatUSDT, shortHash } from '../lib/format'
 import { hasFailedCheck } from '../lib/normalize'
 import { openInvoiceDocument } from '../lib/storage'
 import type { Invoice, InvoiceStatus, OwnInvoice } from '../types'
@@ -276,7 +276,6 @@ export default function Facturas() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                     <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(i.amount)}</span>
-                    <span style={{ ...MONO, fontSize: '12px', color: '#3B3FB6' }}>{formatTokens(i.amount)}</span>
                   </div>
                   <span style={{ fontSize: '13px', color: '#5A5468' }}>{formatDate(i.uploaded_at)}</span>
                 </div>
@@ -318,7 +317,6 @@ export default function Facturas() {
                     <td style={{ padding: '16px 18px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                         <span style={{ ...MONO, fontWeight: 600 }}>{formatUSDT(i.amount)}</span>
-                        <span style={{ ...MONO, fontSize: '12px', color: '#3B3FB6' }}>{formatTokens(i.amount)}</span>
                       </div>
                     </td>
                     <td style={{ padding: '16px 18px', whiteSpace: 'nowrap', color: '#5A5468' }}>{formatDate(i.uploaded_at)}</td>

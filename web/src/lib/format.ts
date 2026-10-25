@@ -1,12 +1,12 @@
-/** `$1,050.00` */
+/** `1,050.00 USDT` */
 export function formatUSDT(n: number | string): string {
-  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDT'
 }
 
-/** `$1,050` without decimals when the amount is whole (panel cards). */
+/** `1,050 USDT` without decimals when the amount is whole (panel cards). */
 export function formatUSDTCompact(n: number | string): string {
   const v = Number(n)
-  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: Number.isInteger(v) ? 0 : 2 })
+  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: Number.isInteger(v) ? 0 : 2 }) + ' USDT'
 }
 
 /** `1,050 USDT` */
