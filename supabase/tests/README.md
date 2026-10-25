@@ -7,6 +7,7 @@ SQL-only tests for the donation -> release -> spend-verification route, run agai
 | `01_donation_release.sql` | `wallet_top_up`, `donate_from_balance`, `record_initial_release` (levels 10/10/15/25, idempotency, caps) |
 | `02_timeline_progression.sql` | 3 consecutive verified spends: `submit_spend_for_review` -> `resolve_spend_verdict` -> `record_spend_release`; tranches 2/3/4 released, donation `completed`, `foundation_stats`, reputation, donor timeline, ownership guards, frozen target set, legacy `apply_spend_verdict` compat |
 | `03_fraud_refund.sql` | Rejected spend: foundation frozen, unreleased tranches `broken`, 100% refund of every affected donation to `users.balance` (cap not blocking), `refunds`/`audit_events`, idempotency, completed donation and other foundations untouched, in-flight release after a freeze |
+| `04_registration_audit.sql` | Registration auditor: `begin_registration_review` / `resolve_registration_verdict` (pending -> active / rejected, idempotency, resubmission, duplicate RIF, `data_changed` when RIF/name change during the model call, frozen/unknown guards, `rejected` excluded from `active` rules, client roles without access). The RIF check digit is tested in `supabase/functions/_shared/rif.test.ts` (`deno test`) |
 
 ## Rollback design
 

@@ -114,6 +114,8 @@ const DB_ERRORS: Record<string, [number, string, string]> = {
   invoice_not_found: [404, 'invoice_not_found', 'Factura no encontrada'],
   invoice_not_pending: [409, 'invoice_not_pending', 'La factura ya fue resuelta'],
   donation_refunded: [409, 'donation_refunded', 'La donación ya fue reembolsada'],
+  insufficient_balance: [409, 'insufficient_balance', 'El gasto supera el saldo disponible de la fundación'],
+  already_allocated: [409, 'already_allocated', 'Este gasto ya fue asignado a los aportes'],
   invalid_verdict: [500, 'internal_error', 'Error interno del servidor'],
 }
 
@@ -178,6 +180,13 @@ export async function requirePrivyUser(req: Request): Promise<string> {
     throw new HttpError(401, 'unauthorized', 'Token de acceso inválido')
   }
 }
+
+/**
+ * `public.foundations` is readable by column only (`official_email`, `legal_doc_path`, `legal_doc_hash` and
+ * `rejection_reason` are private): embed foundations with this list instead of `*` when answering clients.
+ */
+export const PUBLIC_FOUNDATION_COLUMNS =
+  'id, user_id, name, description, category, logo_url, wallet_address, reputation_score, payout_percentage, status, total_received, created_at, rif, country, city, level, instagram_url, tiktok_url, x_url, contract_address'
 
 export interface UserRow {
   id: string
@@ -397,7 +406,7 @@ export async function releaseSpend(invoiceId: string): Promise<SpendReleaseResul
 
     // Send. A failure before a hash exists is safe to compensate; after a hash exists, never.
     const releaseWei = BigInt(sumCents(pending)) * 10_000_000_000n
-    const to = (invoice.foundation as { wallet_address: string } | null)?.wallet_address
+    const to = (invoice.foundation as unknown as { wallet_address: string } | null)?.wallet_address
     if (!to) throw new HttpError(500, 'internal_error', 'Error interno del servidor')
     try {
       txHash = await sendRelease(to, releaseWei)

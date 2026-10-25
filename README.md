@@ -137,6 +137,11 @@ Todas se despliegan con `verify_jwt = false` porque reciben tokens de Privy, no 
 | `wallet-topup` | Suma saldo simulado. El tope de 10.000 USD se aplica de forma atómica en la base de datos. |
 | `donate` | Descuenta el saldo, registra la donación y libera el tramo inicial. Si la red falla tras el débito, responde 200 con liberación pendiente. |
 | `release-initial` | Reintenta la liberación inicial. Solo el donante dueño de la donación puede llamarla. |
+| `validate-registration` | Auditor IA del registro: valida el RIF (formato y dígito verificador en código, datos del documento con el modelo, duplicados) y pasa la fundación de `pending` a `active` (aceptada) o `rejected`. Si el modelo falla deja `pending` y se puede reintentar. Envía el resultado por correo (Resend). |
+
+### Auditor del registro
+
+Estados de `foundations.status`: `pending` (en revisión), `active` (aceptada/validada), `rejected` (con `rejection_reason`; puede reenviarse) y `frozen`. El documento RIF se sube al bucket privado `rif-docs` (entrada `{uuid}.ext`; la función lo mueve a `{foundation_id}/`). Los datos validados (RIF, razón social, tipo de contribuyente, domicilio fiscal, veredicto, checks) quedan en `foundation_verifications`, tabla solo accesible con service role; `verify-spend` los usa para comparar el RIF y el nombre de la fundación. Las pruebas del validador de RIF: `deno test supabase/functions/_shared/rif.test.ts`.
 
 ### Liberación inicial
 
@@ -202,7 +207,10 @@ Cada paquete tiene su propio archivo. No hay `.env` en la raíz. Las plantillas 
 | `CHAIN_ID` | Opcional (84532) | - | - | Sí | Sí |
 | `CHAIN_RPC` | Opcional (https://sepolia.base.org) | - | - | Sí | Sí |
 | `CHAIN_MODE` | Opcional (`simulated` por defecto; solo `real` envía transacciones en Base Sepolia) | - | - | Sí | Sí |
-| `ANTHROPIC_API_KEY` | Sí (verificación de gastos con `verify-spend`) | - | - | Sí | Sí |
+| `ANTHROPIC_API_KEY` | Sí (verificación de gastos con `verify-spend` y del registro con `validate-registration`) | - | - | Sí | Sí |
+| `RESEND_API_KEY` | Opcional (correo de resultado del registro; sin ella no se envía y queda registrado como `skipped`) | - | - | Sí | Sí |
+| `EMAIL_FROM` | Opcional (por defecto `Rastro <onboarding@resend.dev>`; usa un dominio verificado en Resend) | - | - | Sí | Sí |
+| `APP_URL` | Opcional (URL pública del frontend, para el enlace al panel en el correo) | - | - | Sí | Sí |
 | `SUPABASE_URL` | Solo local | - | - | Sí | No (se inyecta sola) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Solo local | - | - | Sí | No (se inyecta sola) |
 
@@ -218,7 +226,7 @@ El frontend valida sus variables al arrancar. Si falta una requerida, falla con 
 
 1. Aplicar la migración A (`*_simulated_donor_balance_a.sql`).
 2. Cargar los secretos de las funciones: `npx supabase secrets set CHAIN_ID=... CHAIN_RPC=... ESCROW_PRIVATE_KEY=... PRIVY_APP_ID=... PRIVY_VERIFICATION_KEY=... ANTHROPIC_API_KEY=... CHAIN_MODE=simulated`. `CHAIN_MODE` es opcional: sin definir (o con cualquier valor distinto de `real`) la cadena es simulada y no hace falta ETH.
-3. Desplegar las cuatro funciones.
+3. Desplegar las funciones (incluida `validate-registration`, y `verify-spend` por el código compartido) y aplicar la migración `*_registration_audit.sql`. Opcional para el correo: `npx supabase secrets set RESEND_API_KEY=... EMAIL_FROM=... APP_URL=...`.
 4. Aplicar la migración B (`*_simulated_donor_balance_b.sql`), que elimina las políticas públicas de inserción en `users` y `donations`.
 5. Desplegar el frontend.
 

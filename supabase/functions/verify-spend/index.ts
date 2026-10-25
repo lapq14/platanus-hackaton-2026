@@ -15,16 +15,12 @@
 // and the response carries release.status = 'pending'; calling again with the same invoice_id retries.
 // Required secret: ANTHROPIC_API_KEY (supabase secrets set ANTHROPIC_API_KEY=...).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
-import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0'
-import { encodeBase64 } from 'jsr:@std/encoding@1/base64'
-import { admin, CORS, dbError, env, fail, HttpError, json, readBody, releaseSpend, requireUser, type SpendReleaseResult } from '../_shared/core.ts'
+import { askJson, docBlock, loadDoc, type Doc } from '../_shared/ai.ts'
+import { admin, CORS, dbError, fail, HttpError, json, readBody, releaseSpend, requireUser, type SpendReleaseResult } from '../_shared/core.ts'
+import { digits, namesMatch } from '../_shared/names.ts'
 
 const RIF_RE = /^[JGVEPC]-\d{8}-\d$/
 const BUCKET = 'invoices'
-const MAX_BYTES = 10 * 1024 * 1024
-const MODEL = 'claude-opus-5-5'
-// Per attempt; with maxRetries: 1 the worst case (~2 min) stays below the 150 s Edge Function limit.
-const MODEL_TIMEOUT_MS = 60_000
 
 type CheckId = 'origin_account_owned' | 'destination_account_business' | 'rif_exists' | 'rif_matches_destination'
 const CHECK_IDS: CheckId[] = ['origin_account_owned', 'destination_account_business', 'rif_exists', 'rif_matches_destination']
@@ -97,103 +93,30 @@ Extract the facts exactly as printed (empty string when absent). Account numbers
 - rif_matches_destination: in document 2 the RIF belongs to the same business that owns the destination account.
 You only judge what the documents show; the platform separately checks its own registry. Keep each detail to one short sentence in Spanish.`
 
-const digits = (v: string) => v.replace(/\D/g, '')
-
-const normalizeName = (v: string) =>
-  v
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .replace(/\b(c a|ca|s a|sa|a c|ac|fundacion|asociacion civil)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-const namesMatch = (a: string, b: string) => {
-  const x = normalizeName(a)
-  const y = normalizeName(b)
-  return x.length >= 3 && y.length >= 3 && (x === y || x.includes(y) || y.includes(x))
-}
-
-function sniffMime(bytes: Uint8Array): 'application/pdf' | 'image/png' | 'image/jpeg' | null {
-  const at = (s: string) => [...s].every((c, i) => bytes[i] === c.charCodeAt(0))
-  if (at('%PDF')) return 'application/pdf'
-  if (bytes[0] === 0x89 && at('\x89PNG')) return 'image/png'
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg'
-  return null
-}
-
-async function loadDoc(path: string) {
-  const { data, error } = await admin.storage.from(BUCKET).download(path)
-  if (error || !data) throw new HttpError(400, 'file_not_found', 'No se encontró uno de los documentos subidos')
-  if (data.size === 0 || data.size > MAX_BYTES) throw new HttpError(400, 'invalid_file', 'Cada documento debe pesar hasta 10 MB')
-  const bytes = new Uint8Array(await data.arrayBuffer())
-  const mime = sniffMime(bytes)
-  if (!mime) throw new HttpError(400, 'invalid_file', 'Usa PDF, JPG o PNG')
-  return { mime, base64: encodeBase64(bytes) }
-}
-
-type Doc = Awaited<ReturnType<typeof loadDoc>>
-
-const docBlock = (d: Doc) =>
-  d.mime === 'application/pdf'
-    ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: d.base64 } }
-    : { type: 'image' as const, source: { type: 'base64' as const, media_type: d.mime, data: d.base64 } }
-
 /** Asks Claude for a structured verdict. Any failure throws an HttpError: the invoice then stays in_review. */
-async function askModel(origin: Doc, destination: Doc, foundation: { name: string; rif: string | null }): Promise<Verdict> {
-  const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY'), timeout: MODEL_TIMEOUT_MS, maxRetries: 1 })
-  const facts = `Foundation facts (from our database):\n- Name: ${foundation.name}\n- RIF: ${foundation.rif ?? '(not registered)'}`
-  try {
-    const msg = await client.messages.create({
-      model: MODEL,
-      max_tokens: 4000,
-      system: SYSTEM,
-      output_config: { effort: 'high', format: { type: 'json_schema', schema: VERDICT_SCHEMA } },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Document 1: proof of ORIGIN account ownership.' },
-            docBlock(origin),
-            { type: 'text', text: 'Document 2: destination business RIF and DESTINATION account.' },
-            docBlock(destination),
-            { type: 'text', text: `${facts}\n\nExtract the data and return the verdict.` },
-          ],
-        },
-      ],
-    } as Anthropic.MessageCreateParamsNonStreaming)
+function askModel(origin: Doc, destination: Doc, foundation: { name: string; rif: string | null; legalName?: string | null }): Promise<Verdict> {
+  const facts = [
+    'Foundation facts (from our database):',
+    `- Name: ${foundation.name}`,
+    ...(foundation.legalName && foundation.legalName !== foundation.name ? [`- Legal name (validated from its RIF document): ${foundation.legalName}`] : []),
+    `- RIF: ${foundation.rif ?? '(not registered)'}`,
+  ].join('\n')
+  return askJson({
+    label: 'verify-spend',
+    system: SYSTEM,
+    schema: VERDICT_SCHEMA,
+    pendingNote: 'La factura sigue en revisión.',
+    parse: parseVerdict,
+    content: [
+      { type: 'text', text: 'Document 1: proof of ORIGIN account ownership.' },
+      docBlock(origin),
+      { type: 'text', text: 'Document 2: destination business RIF and DESTINATION account.' },
+      docBlock(destination),
+      { type: 'text', text: `${facts}
 
-    if (msg.stop_reason === 'refusal' || msg.stop_reason === 'max_tokens') {
-      console.error('verify-spend: unusable stop_reason', msg.stop_reason)
-      throw new HttpError(502, 'ai_unavailable', 'El agente no pudo emitir un veredicto. La factura sigue en revisión.')
-    }
-    const block = msg.content.find((b) => b.type === 'text')
-    if (!block || block.type !== 'text') throw new Error('no text block')
-    return parseVerdict(JSON.parse(block.text))
-  } catch (e) {
-    if (e instanceof HttpError) throw e
-    // Most specific first.
-    if (e instanceof Anthropic.RateLimitError) {
-      throw new HttpError(429, 'ai_rate_limited', 'El agente está saturado. Intenta de nuevo en un minuto; la factura sigue en revisión.')
-    }
-    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
-      console.error('verify-spend: Anthropic credentials rejected')
-      throw new HttpError(500, 'ai_misconfigured', 'El agente no está configurado correctamente')
-    }
-    if (e instanceof Anthropic.APIConnectionTimeoutError) {
-      throw new HttpError(504, 'ai_timeout', 'El agente tardó demasiado en responder. La factura sigue en revisión.')
-    }
-    if (e instanceof Anthropic.APIConnectionError) {
-      throw new HttpError(502, 'ai_unavailable', 'No se pudo contactar al agente. La factura sigue en revisión.')
-    }
-    if (e instanceof Anthropic.APIError) {
-      console.error('verify-spend: Anthropic API error', e.status)
-      throw new HttpError(502, 'ai_unavailable', 'El agente no pudo emitir un veredicto. La factura sigue en revisión.')
-    }
-    console.error('verify-spend: malformed model output', e instanceof Error ? e.message : e)
-    throw new HttpError(502, 'ai_malformed', 'El agente devolvió una respuesta inválida. La factura sigue en revisión.')
-  }
+Extract the data and return the verdict.` },
+    ],
+  })
 }
 
 /** Defensive shape validation: the schema should guarantee it, but never trust it for an approval. */
@@ -281,8 +204,21 @@ Deno.serve(async (req) => {
     })
     if (subErr) throw dbError(subErr)
 
-    const [origin, destination] = await Promise.all([loadDoc(originPath), loadDoc(destPath)])
-    const verdict = await askModel(origin, destination, { name: foundation.name, rif: foundation.rif })
+    const [origin, destination] = await Promise.all([loadDoc(BUCKET, originPath), loadDoc(BUCKET, destPath)])
+
+    // RIF and legal name already validated by the registration auditor (absent for foundations that predate it:
+    // those keep using what they declared).
+    const { data: validated, error: vErr } = await admin
+      .from('foundation_verifications')
+      .select('rif_normalized, legal_name')
+      .eq('foundation_id', foundation.id)
+      .eq('verdict', 'approved')
+      .maybeSingle()
+    if (vErr) throw dbError(vErr)
+    const expectedRif = validated?.rif_normalized ?? foundation.rif
+    const legalName = validated?.legal_name ?? null
+
+    const verdict = await askModel(origin, destination, { name: foundation.name, rif: expectedRif, legalName })
     // --- Deterministic DB-side checks (a-c), independent of the model ---------------------------
     const destRif = verdict.destination.business_rif.trim().toUpperCase()
     const destAccount = digits(verdict.destination.account_number)
@@ -302,8 +238,8 @@ Deno.serve(async (req) => {
 
     const det: Record<CheckId, { passed: boolean; detail: string }> = {
       origin_account_owned: (() => {
-        const nameOk = namesMatch(verdict.origin.holder_name, foundation.name)
-        const rifOk = originRif !== '' && originRif === foundation.rif
+        const nameOk = namesMatch(verdict.origin.holder_name, foundation.name) || (legalName !== null && namesMatch(verdict.origin.holder_name, legalName))
+        const rifOk = originRif !== '' && originRif === expectedRif
         const hasId = originRif !== '' || verdict.origin.holder_name.trim() !== ''
         return nameOk && rifOk && hasId
           ? { passed: true, detail: 'El titular coincide con el nombre y RIF de la fundación.' }
