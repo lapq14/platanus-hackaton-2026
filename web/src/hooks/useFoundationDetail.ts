@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { FOUNDATION_COLUMNS, INVOICES_VIEW } from '../lib/columns'
 import { toFoundation, toInvoice, toStats } from '../lib/normalize'
 import type { Foundation, FoundationStats, Invoice } from '../types'
 
@@ -23,10 +24,10 @@ export function useFoundationDetail(id: string | undefined): DetailState {
     setState(INITIAL)
     void (async () => {
       const [f, s, inv] = await Promise.all([
-        supabase.from('foundations').select('*').eq('id', id).maybeSingle(),
+        supabase.from('foundations').select(FOUNDATION_COLUMNS).eq('id', id).maybeSingle(),
         supabase.from('foundation_stats').select('*').eq('foundation_id', id).maybeSingle(),
         supabase
-          .from('invoices')
+          .from(INVOICES_VIEW)
           .select('*')
           .eq('foundation_id', id)
           .eq('status', 'verified')

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { usePrivy } from '@privy-io/react-auth'
 import { listDonations } from '../lib/api'
-import { supabase } from '../lib/supabase'
 import { toDonation, toInvoice } from '../lib/normalize'
 import type { Donation, Invoice } from '../types'
 import { useCurrentUser } from './useCurrentUser'
@@ -32,18 +31,12 @@ export function useMyDonations() {
     try {
       const token = await getAccessToken()
       if (!token) throw new Error('Sesión expirada')
-      const { donations: raw } = await listDonations(token, 'donor')
+      // The function also answers the invoices the tranches / refunds point to: `invoices` is not readable
+      // with the anon key any more.
+      const { donations: raw, invoices: rows } = await listDonations(token, 'donor')
       const donations = raw.map(toDonation)
-      const ids = new Set<string>()
-      for (const d of donations) {
-        for (const t of d.tranches ?? []) if (t.invoice_id) ids.add(t.invoice_id)
-        for (const r of d.refunds ?? []) if (r.invoice_id) ids.add(r.invoice_id)
-      }
       const invoices: Record<string, Invoice> = {}
-      if (ids.size > 0) {
-        const { data } = await supabase.from('invoices').select('*').in('id', [...ids])
-        for (const i of (data ?? []) as Invoice[]) invoices[i.id] = toInvoice(i)
-      }
+      for (const i of rows ?? []) invoices[i.id] = toInvoice(i)
       setState({ donations, invoices, loading: false, error: null })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : 'No se pudieron cargar tus donaciones' }))

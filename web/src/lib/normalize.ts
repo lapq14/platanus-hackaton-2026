@@ -25,6 +25,9 @@ export const toStats = (s: FoundationStats): FoundationStats => ({
   next_tranche_total: n(s.next_tranche_total),
 })
 
+// `refunds.donation_id` is UNIQUE, so PostgREST embeds the refund as a single object (or null), not a list.
+const asList = <T>(v: T | T[] | null | undefined): T[] => (Array.isArray(v) ? v : v ? [v] : [])
+
 export const toDonation = (d: Donation): Donation => ({
   ...d,
   total_amount: n(d.total_amount),
@@ -32,7 +35,7 @@ export const toDonation = (d: Donation): Donation => ({
   amount_refunded: n(d.amount_refunded),
   foundation: d.foundation ? toFoundation(d.foundation) : undefined,
   tranches: (d.tranches ?? []).map(toTranche).sort((a, b) => a.index - b.index),
-  refunds: (d.refunds ?? []).map(toRefund),
+  refunds: asList(d.refunds).map(toRefund),
 })
 
 /** An invoice has "details" when the agent flagged at least one check (human review suggested). */
