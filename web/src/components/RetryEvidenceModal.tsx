@@ -176,7 +176,7 @@ export default function RetryEvidenceModal({ invoice, maxAttempts, onClose, onDo
       {!finished && (
         <fieldset disabled={busy !== 'idle'} style={{ border: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '14px', minWidth: 0 }}>
           <Slot title="Comprobante de cuenta de origen" hint="Prueba de que la cuenta es de la fundación" stored={!needsOrigin} file={origin} onFile={setOrigin} onError={setError} />
-          <Slot title="Documento con RIF y cuenta del negocio" hint="RIF y cuenta de destino del negocio" stored={!needsDest} file={dest} onFile={setDest} onError={setError} />
+          <Slot title="Documento con el RIF del negocio" hint="RIF del negocio" stored={!needsDest} file={dest} onFile={setDest} onError={setError} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <span style={{ fontSize: '14px', fontWeight: 600 }}>Factura (opcional: reemplaza los archivos actuales)</span>
             <Dropzone

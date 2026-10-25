@@ -268,7 +268,7 @@ function SealForm({ foundation, available, disabled, onSent }: SealFormProps) {
             accept="application/pdf,image/jpeg,image/png"
             multiple
             icon="upload"
-            title="Sube las facturas"
+            title="Sube la factura"
             hint="PDF o fotos · se guarda su hash en cadena"
             onFiles={addFiles}
           />
@@ -287,7 +287,7 @@ function SealForm({ foundation, available, disabled, onSent }: SealFormProps) {
           {!pendingRelease && (
             <>
               <SpendDocField title="Comprobante de cuenta de origen" hint="Prueba de que la cuenta es de la fundación · PDF o foto" file={originFile} onFile={setOriginFile} onError={setFileError} />
-              <SpendDocField title="Documento con RIF y cuenta del negocio" hint="RIF y cuenta de destino del negocio · PDF o foto" file={destFile} onFile={setDestFile} onError={setFileError} />
+              <SpendDocField title="Documento con el RIF del negocio" hint="RIF del negocio · PDF o foto" file={destFile} onFile={setDestFile} onError={setFileError} />
             </>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

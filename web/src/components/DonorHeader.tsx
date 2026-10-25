@@ -55,15 +55,9 @@ export function DonorHeaderView({ active, balance, initial, foundationHref, onLo
           <Logo variant="positive" height={40} />
         </Link>
         <nav style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flex: 1 }}>
-          {home ? (
-            <a href="/#fundaciones" style={LINK}>
-              Fundaciones
-            </a>
-          ) : (
-            <Link to="/explorar" style={active === 'explorar' ? LINK_ACTIVE : LINK}>
-              Explorar
-            </Link>
-          )}
+          <Link to="/explorar" style={active === 'explorar' ? LINK_ACTIVE : LINK}>
+            Explorar
+          </Link>
           <Link to="/mis-rastros" style={active === 'mis-rastros' ? LINK_ACTIVE : LINK}>
             Mis rastros
           </Link>
